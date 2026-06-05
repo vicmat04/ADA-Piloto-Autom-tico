@@ -1,0 +1,15 @@
+Exception in Tkinter callback
+Traceback (most recent call last):
+  File "C:\Program Files\Python313\Lib\tkinter\__init__.py", line 2074, in __call__
+    return self.func(*args)
+           ~~~~~~~~~^^^^^^^
+  File "C:\Users\gebil\OneDrive - infoplazas\Archivos de Victor Dominguez - AnalizadorDB by_VicTorD\AnalizadorBDbyVicTor\ADA - Piloto Auto v5.0\ADA - Piloto Auto v5.py", line 746, in <lambda>
+    ttk.Button(action_frame, text="📈 Ver Historial Sucursales", command=lambda: sucursales_history.mostrar_ventana_historial(self), bootstyle="secondary-outline").pack(pady=5)
+                                                                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\gebil\OneDrive - infoplazas\Archivos de Victor Dominguez - AnalizadorDB by_VicTorD\AnalizadorBDbyVicTor\ADA - Piloto Auto v5.0\sucursales_history.py", line 200, in mostrar_ventana_historial
+    HistorialWindow(output_parent)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "C:\Users\gebil\OneDrive - infoplazas\Archivos de Victor Dominguez - AnalizadorDB by_VicTorD\AnalizadorBDbyVicTor\ADA - Piloto Auto v5.0\sucursales_history.py", line 109, in __init__
+    super().__init__(parent, title="Historial de Sincronización de Sucursales")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Toplevel.__init__() got multiple values for argument 'title'

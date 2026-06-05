@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f7fa;
+        }
+
+        .email-container {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: left;
+        }
+
+        .header h2 {
+            margin: 0;
+            font-size: 24px;
+            color: white;
+            font-weight: 700;
+        }
+
+        .header p {
+            margin: 8px 0 0 0;
+            font-size: 14px;
+            opacity: 0.95;
+            color: white;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .greeting {
+            font-size: 16px;
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+
+        /* Info Box */
+        .info-box {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            border-left: 4px solid #2196f3;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .info-box h3 {
+            margin: 0 0 15px 0;
+            font-size: 16px;
+            color: #1565c0;
+            font-weight: 600;
+        }
+
+        .info-box ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+
+        .info-box li {
+            margin: 8px 0;
+            color: #0d47a1;
+        }
+
+        /* Indicadores de Sincronización */
+        .porc-sinc-container {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 12px;
+            padding: 25px;
+            margin: 25px 0;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        .porc-sinc-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 20px;
+            text-align: center;
+            padding-bottom: 15px;
+            border-bottom: 3px solid #667eea;
+        }
+
+        .porc-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .porc-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            border-left: 5px solid #667eea;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .porc-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .porc-card.revision {
+            border-left-color: #f39c12;
+        }
+
+        .porc-label {
+            font-size: 12px;
+            color: #7f8c8d;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .porc-value {
+            font-size: 42px;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            line-height: 1;
+        }
+
+        .porc-bar-container {
+            width: 100%;
+            height: 10px;
+            background-color: #ecf0f1;
+            border-radius: 5px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .porc-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            border-radius: 5px;
+            transition: width 0.3s ease;
+        }
+
+        .porc-bar.revision {
+            background: linear-gradient(90deg, #f39c12 0%, #e74c3c 100%);
+        }
+
+        .porc-subtitle {
+            font-size: 12px;
+            color: #95a5a6;
+            margin-top: 8px;
+            font-weight: 500;
+        }
+
+        /* Resumen Ejecutivo con Cards */
+        .resumen-container {
+            margin: 30px 0;
+        }
+
+        .resumen-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
+            border-top: 4px solid #667eea;
+        }
+
+        .stat-card.warning {
+            border-top-color: #f39c12;
+        }
+
+        .stat-card.alert {
+            border-top-color: #e74c3c;
+        }
+
+        .stat-icon {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #2c3e50;
+            margin: 5px 0;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #7f8c8d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+
+        /* Tablas Mejoradas */
+        .table-container {
+            margin: 25px 0;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .table-header {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            padding: 15px 20px;
+            font-size: 16px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .table-header.red {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+        }
+
+        .table-header.yellow {
+            background: linear-gradient(135deg, #f39c12 0%, #d68910 100%);
+        }
+
+        .table-header.green {
+            background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+        }
+
+        .table-header.gray {
+            background: linear-gradient(135deg, #7f8c8d 0%, #5d6d7e 100%);
+        }
+
+        .table-header .count {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+        }
+
+        th {
+            background: #f8f9fa;
+            color: #495057;
+            text-align: left;
+            padding: 12px 15px;
+            font-weight: 600;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #f0f0f0;
+            color: #2c3e50;
+        }
+
+        tr:hover {
+            background-color: #f8f9fa;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Alternating row colors */
+        tbody tr:nth-child(even) {
+            background-color: #fafbfc;
+        }
+
+        /* Días sin sincronizar destacados */
+        .dias-criticos-9 {
+            background-color: #fff4cc !important;
+        }
+
+        .dias-criticos-10 {
+            background-color: #ffe4cc !important;
+        }
+
+        /* Nota informativa */
+        .info-note {
+            background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+            border-left: 4px solid #4caf50;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-size: 13px;
+            color: #1b5e20;
+        }
+
+        .info-note strong {
+            color: #2e7d32;
+        }
+
+        /* Footer */
+        .footer {
+            margin-top: 40px;
+            padding: 25px 30px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-top: 3px solid #667eea;
+            border-radius: 0 0 12px 12px;
+        }
+
+        .signature {
+            margin-bottom: 20px;
+        }
+
+        .signature p {
+            margin: 8px 0;
+        }
+
+        .signature .team-name {
+            font-size: 18px;
+            font-weight: 700;
+            color: #667eea;
+            margin-top: 10px;
+        }
+
+        .disclaimer {
+            font-size: 11px;
+            color: #868e96;
+            font-style: italic;
+            padding-top: 15px;
+            border-top: 1px solid #dee2e6;
+        }
+
+        hr {
+            border: none;
+            border-top: 2px solid #e9ecef;
+            margin: 30px 0;
+        }
+
+        .attachment-note {
+            background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+            border-left: 4px solid #ff9800;
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-size: 14px;
+            color: #e65100;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Contenedor Principal del Email -->
+    <div class="email-container">
+
+        <!-- Header -->
+        <div class="header">
+            <h2>📊 Reporte de Sincronización - OneRoof</h2>
+            <p>Sistema ADA | Analizador de Bases de Datos</p>
+        </div>
+
+        <!-- Contenido Principal -->
+        <div class="content">
+
+            <!-- Saludo -->
+            <p class="greeting"><strong>Buenas tardes,</strong></p>
+
+            <p>Le compartimos el estatus actualizado de la sincronización de las <strong>Bases de Datos de
+                    OneRoof</strong>
+                correspondientes a las Infoplazas de la <strong>Regional de Los Santos</strong>.</p>
+
+            <!-- Nota de adjunto -->
+            <div class="attachment-note">
+                📎 <strong>Archivo adjunto:</strong> Se incluye documento en Excel con información detallada para su
+                análisis.
+            </div>
+
+            <!-- Datos del Reporte -->
+            <div class="info-box">
+                <h3>📋 Datos del Reporte</h3>
+                <ul>
+                    <li><strong>Regional:</strong> Los Santos</li>
+                    <li><strong>Fecha del reporte:</strong> 23 de diciembre de 2025</li>
+                </ul>
+            </div>
+
+            <!-- INDICADORES DE SINCRONIZACIÓN -->
+            <div class="porc-sinc-container">
+                <div class="porc-sinc-title">
+                    📈 Indicadores de Sincronización
+                </div>
+
+                <div class="porc-grid">
+                    <!-- Tarjeta 1: Porcentaje al Día -->
+                    <div class="porc-card">
+                        <div class="porc-label">✅ Porcentaje al Día</div>
+                        <div class="porc-value">73.5%</div>
+                        <div class="porc-bar-container">
+                            <div class="porc-bar" style="width: 73.5%;"></div>
+                        </div>
+                        <div class="porc-subtitle">25 de 34 sucursales operativas</div>
+                    </div>
+
+                    <!-- Tarjeta 2: Porcentaje para Revisión -->
+                    <div class="porc-card revision">
+                        <div class="porc-label">⚠️ Porcentaje para Revisión</div>
+                        <div class="porc-value">26.5%</div>
+                        <div class="porc-bar-container">
+                            <div class="porc-bar revision" style="width: 26.5%;"></div>
+                        </div>
+                        <div class="porc-subtitle">9 de 34 sucursales operativas</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RESUMEN EJECUTIVO CON CARDS -->
+            <div class="resumen-container">
+                <div class="resumen-title">📊 Resumen Ejecutivo de Sucursales Operativas</div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon">📈</div>
+                        <div class="stat-value">34</div>
+                        <div class="stat-label">Verificadas</div>
+                    </div>
+
+                    <div class="stat-card">
+                        <div class="stat-icon">✅</div>
+                        <div class="stat-value">25</div>
+                        <div class="stat-label">En Periodo</div>
+                    </div>
+
+                    <div class="stat-card warning">
+                        <div class="stat-icon">⚠️</div>
+                        <div class="stat-value">9</div>
+                        <div class="stat-label">Para Revisión</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="info-note">
+                <strong>Nota informativa:</strong> Los indicadores de sincronización reflejan la proporción de
+                sucursales que están
+                al día versus aquellas que requieren atención inmediata.
+            </div>
+
+            <hr>
+
+            <!-- TABLA 1: Carpetas Vacías (solo si hay) -->
+            <div class="table-container">
+                <div class="table-header alert">
+                    <span>🚩 Sucursales con Carpeta Vacía</span>
+                    <span class="count">2</span>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Sucursal</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>1</td>
+                            <td>Guararé</td>
+                        </tr>
+                        <tr>
+                            <td>2</td>
+                            <td>Pedasí</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- TABLA 2: Sucursales con observaciones (Rojas) -->
+            <div class="table-container">
+                <div class="table-header red">
+                    <span>🔴 Sucursales con Observaciones</span>
+                    <span class="count">3</span>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Sucursal</th>
+                            <th>Última Sincronización</th>
+                            <th>Días sin Sincronizar</th>
+                            <th>Observación</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>1</td>
+                            <td>Las Tablas</td>
+                            <td>15/09/2025</td>
+                            <td>99 (3.3 meses)</td>
+                            <td>Base corrupta</td>
+                        </tr>
+                        <tr>
+                            <td>2</td>
+                            <td>Macaracas</td>
+                            <td>20/10/2025</td>
+                            <td>64 (2.1 meses)</td>
+                            <td>Error en la conexión</td>
+                        </tr>
+                        <tr>
+                            <td>3</td>
+                            <td>Pocrí</td>
+                            <td>05/11/2025</td>
+                            <td>48 (1.6 meses)</td>
+                            <td>CERRADA TEMPORALMENTE</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- TABLA 3: Más de 10 días (Amarillas) -->
+            <div class="table-container">
+                <div class="table-header yellow">
+                    <span>🟡 Sucursales con Más de 10 Días sin Sincronizar</span>
+                    <span class="count">4</span>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Sucursal</th>
+                            <th>Última Sincronización</th>
+                            <th>Días sin Sincronizar</th>
+                            <th>Observación</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>1</td>
+                            <td>Los Asientos</td>
+                            <td>30/11/2025</td>
+                            <td>23</td>
+                            <td>Revisar</td>
+                        </tr>
+                        <tr>
+                            <td>2</td>
+                            <td>Los Pozos</td>
+                            <td>05/12/2025</td>
+                            <td>18</td>
+                            <td>Revisar</td>
+                        </tr>
+                        <tr>
+                            <td>3</td>
+                            <td>Tonosí</td>
+                            <td>09/12/2025</td>
+                            <td>14</td>
+                            <td>Revisar</td>
+                        </tr>
+                        <tr>
+                            <td>4</td>
+                            <td>Villa Lourdes</td>
+                            <td>11/12/2025</td>
+                            <td>12</td>
+                            <td>Revisar</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- TABLA 4: Sincronizadas (Verdes) -->
+            <div class="table-container">
+                <div class="table-header green">
+                    <span>✅ Sucursales Sincronizadas Dentro del Periodo</span>
+                    <span class="count">25</span>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Sucursal</th>
+                            <th>Última Sincronización</th>
+                            <th>Días sin Sincronizar</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="dias-criticos-10">
+                            <td>1</td>
+                            <td>La Colorada</td>
+                            <td>13/12/2025</td>
+                            <td>10</td>
+                        </tr>
+                        <tr class="dias-criticos-9">
+                            <td>2</td>
+                            <td>Las Palmitas</td>
+                            <td>14/12/2025</td>
+                            <td>9</td>
+                        </tr>
+                        <tr>
+                            <td>3</td>
+                            <td>Las Cruces</td>
+                            <td>16/12/2025</td>
+                            <td>7</td>
+                        </tr>
+                        <tr>
+                            <td>4</td>
+                            <td>Las Guabas</td>
+                            <td>18/12/2025</td>
+                            <td>5</td>
+                        </tr>
+                        <tr>
+                            <td>5</td>
+                            <td>Las Trancas</td>
+                            <td>20/12/2025</td>
+                            <td>3</td>
+                        </tr>
+                        <tr>
+                            <td>6</td>
+                            <td>Llano de Piedra</td>
+                            <td>21/12/2025</td>
+                            <td>2</td>
+                        </tr>
+                        <tr>
+                            <td>7</td>
+                            <td>Los Santos (Sede)</td>
+                            <td>22/12/2025</td>
+                            <td>1</td>
+                        </tr>
+                        <tr>
+                            <td colspan="4" style="text-align: center; color: #7f8c8d; font-style: italic;">
+                                ... y 18 sucursales más con excelente sincronización
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- TABLA 5: Cerradas Definitivamente -->
+            <div class="table-container">
+                <div class="table-header gray">
+                    <span>🔒 Sucursales Cerradas Definitivamente</span>
+                    <span class="count">5</span>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Sucursal</th>
+                            <th>Observación</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>1</td>
+                            <td>El Cacao</td>
+                            <td>CERRADA DEFINITIVAMENTE</td>
+                        </tr>
+                        <tr>
+                            <td>2</td>
+                            <td>El Ejido</td>
+                            <td>CERRADA DEFINITIVAMENTE</td>
+                        </tr>
+                        <tr>
+                            <td>3</td>
+                            <td>El Hato</td>
+                            <td>CERRADA DEFINITIVAMENTE</td>
+                        </tr>
+                        <tr>
+                            <td>4</td>
+                            <td>El Cañafístulo</td>
+                            <td>CERRADA DEFINITIVAMENTE</td>
+                        </tr>
+                        <tr>
+                            <td>5</td>
+                            <td>El Macano</td>
+                            <td>CERRADA DEFINITIVAMENTE</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div class="signature">
+                <p style="margin: 5px 0; color: #495057;">Atentamente,</p>
+                <p class="team-name">Equipo ADA | GEBILO Regional de Los Santos</p>
+            </div>
+
+            <div class="disclaimer">
+                Este es un mensaje automático generado por el Sistema ADA (Analizador de Datos Automatizado).
+                La información contenida en este correo es confidencial y de uso exclusivo para los destinatarios
+                autorizados.
+            </div>
+        </div>
+
+    </div>
+
+</body>
+
+</html>
