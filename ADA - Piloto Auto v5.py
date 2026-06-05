@@ -1328,16 +1328,17 @@ class App(ttk.Window):
         ttk.Button(form_frame, text="Quitar", bootstyle="danger-outline", command=self.remove_recipient, width=15).pack(side=LEFT, padx=(5, 0))
 
         # --- Tabla de Destinatarios ---
-        cols = ('nombre', 'correo', 'cargo', 'regional')
+        cols = ('nombre', 'correo', 'cargo', 'regional', 'activo')
         self.recipients_tree = ttk.Treeview(container, columns=cols, show='headings', bootstyle=DARK)
         
-        headings = {'nombre': 'Nombre', 'correo': 'Correo', 'cargo': 'Cargo', 'regional': 'Regional'}
+        headings = {'nombre': 'Nombre', 'correo': 'Correo', 'cargo': 'Cargo', 'regional': 'Regional', 'activo': 'Activo'}
         for col in cols: self.recipients_tree.heading(col, text=headings[col], command=lambda c=col: self.sort_treeview(self.recipients_tree, c, False))
         
         self.recipients_tree.column('nombre', width=150)
         self.recipients_tree.column('correo', width=150)
         self.recipients_tree.column('cargo', width=130)
         self.recipients_tree.column('regional', width=130)
+        self.recipients_tree.column('activo', width=80, anchor='center')
 
         self.recipients_tree.pack(side=LEFT, fill=BOTH, expand=True)
         scrollbar = ttk.Scrollbar(container, orient=VERTICAL, command=self.recipients_tree.yview)
@@ -1347,6 +1348,7 @@ class App(ttk.Window):
         # Evento Doble Clic para Editar
         self.recipients_tree.bind("<Double-1>", self.load_recipient_for_edit)
         self.recipients_tree.bind("<Delete>", lambda event: self.remove_recipient())
+        self.recipients_tree.bind("<ButtonRelease-1>", self.on_recipients_click)
 
         
         # --- Tooltip de ayuda ---
@@ -1354,6 +1356,9 @@ class App(ttk.Window):
 
     def load_recipient_for_edit(self, event):
         """Carga los datos del destinatario seleccionado en el formulario para editar."""
+        column = self.recipients_tree.identify_column(event.x)
+        if column == "#5":
+            return
         selected_item = self.recipients_tree.focus()
         if not selected_item: return
 
@@ -1372,6 +1377,28 @@ class App(ttk.Window):
         self.btn_cancel_edit.pack(side=LEFT, before=self.btn_add_recipient) # Mostrar botón cancelar a la izq del guardar? O next.
         # Mejor pack de nuevo para orden visual si es necesario, pero simple pack/unpack funciona.
         self.btn_cancel_edit.pack(side=LEFT, after=self.btn_add_recipient, padx=5)
+
+    def on_recipients_click(self, event):
+        region = self.recipients_tree.identify("region", event.x, event.y)
+        if region == "cell":
+            column = self.recipients_tree.identify_column(event.x)
+            if column == "#5":
+                item_id = self.recipients_tree.identify_row(event.y)
+                if item_id:
+                    values = list(self.recipients_tree.item(item_id, 'values'))
+                    if len(values) >= 5:
+                        current_activo = values[4]
+                        new_activo = "☐" if current_activo == "☑" else "☑"
+                        values[4] = new_activo
+                        self.recipients_tree.item(item_id, values=values)
+                        
+                        # Actualizar la lista en memoria
+                        email = values[1]
+                        for r in self.recipients_list:
+                            if r['correo'] == email:
+                                r['activo'] = (new_activo == "☑")
+                                break
+                        self.save_settings()
 
     def cancel_edit(self):
         """Cancela el modo edición y limpia el formulario."""
@@ -1415,7 +1442,8 @@ class App(ttk.Window):
             for item in self.recipients_tree.get_children():
                 vals = self.recipients_tree.item(item, 'values')
                 if vals[1] == self.editing_email:
-                    self.recipients_tree.item(item, values=(name, email, cargo, regional))
+                    activo_str = vals[4] if len(vals) >= 5 else "☑"
+                    self.recipients_tree.item(item, values=(name, email, cargo, regional, activo_str))
                     break
             
             # Salir de modo edición
@@ -1428,9 +1456,9 @@ class App(ttk.Window):
                  Messagebox.show_error("Este correo ya está registrado.", "Duplicado", parent=self)
                  return
 
-            new_recipient = {"nombre": name, "correo": email, "cargo": cargo, "regional": regional}
+            new_recipient = {"nombre": name, "correo": email, "cargo": cargo, "regional": regional, "activo": True}
             self.recipients_list.append(new_recipient)
-            self.recipients_tree.insert('', END, values=list(new_recipient.values()))
+            self.recipients_tree.insert('', END, values=(name, email, cargo, regional, "☑"))
             
             # Limpiar
             self.recipient_name.delete(0, END)
@@ -1603,7 +1631,7 @@ class App(ttk.Window):
             if proceso_ok:
                 asunto_correo = f"Estatus de Sincronización - Regional {regional}"
                 cuerpo_html_correo = self.construir_cuerpo_correo(reporte_incidentes, regional)
-                destinatarios_filtrados = [r['correo'] for r in self.recipients_list if r['regional'] in [regional, "Todas"]]
+                destinatarios_filtrados = [r['correo'] for r in self.recipients_list if r['regional'] in [regional, "Todas"] and r.get('activo', True)]
                 threading.Thread(
                     target=enviar_correo_notificacion,
                     args=(asunto_correo, cuerpo_html_correo, destinatarios_filtrados, archivo_salida_final),
@@ -2052,7 +2080,10 @@ class App(ttk.Window):
                 # Cargar destinatarios
                 self.recipients_list = settings.get('email_recipients', [])
                 for recipient in self.recipients_list:
-                    self.recipients_tree.insert('', END, values=list(recipient.values()))
+                    if 'activo' not in recipient:
+                        recipient['activo'] = True
+                    activo_str = "☑" if recipient.get('activo', True) else "☐"
+                    self.recipients_tree.insert('', END, values=(recipient.get('nombre'), recipient.get('correo'), recipient.get('cargo'), recipient.get('regional'), activo_str))
 
                 # Restaurar estado de regionales seleccionadas
                 regionales_guardadas = settings.get('selected_regionales', {})
