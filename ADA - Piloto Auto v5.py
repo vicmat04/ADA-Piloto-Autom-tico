@@ -1145,7 +1145,6 @@ class App(ttk.Window):
         self.editing_email = None # Variable para rastrear qué correo se está editando 
 
         self.create_widgets()
-        self.load_settings()
 
     def create_widgets(self):
         main_frame = ttk.Frame(self, padding=15)
@@ -2074,7 +2073,16 @@ class App(ttk.Window):
                         if proxima_dt > datetime.now():
                             self.iniciar_piloto(from_load=True, proxima_ejecucion_guardada=proxima_dt)
                         else:
-                            self.iniciar_piloto(from_load=False)
+                            fecha_str = proxima_dt.strftime('%d/%m/%Y %H:%M:%S')
+                            confirm = Messagebox.show_question(
+                                f'¿Desea ejecutar el proceso pendiente del piloto automático ahora?\n(Programado originalmente para el {fecha_str})',
+                                'Ejecución Pendiente',
+                                parent=self
+                            )
+                            if confirm == 'Yes':
+                                self.iniciar_piloto(from_load=False)
+                            else:
+                                self.iniciar_piloto(from_load=True, proxima_ejecucion_guardada=None)
 
         except Exception as e:
             logging.error(f"No se pudo cargar la configuración: {e}")
@@ -2149,6 +2157,7 @@ class LoginWindow(ttk.Toplevel):
             self.destroy()
             self.parent.deiconify() # Mostrar ventana principal
             self.parent.state('zoomed') # Maximizar ventana
+            self.parent.load_settings()
         else:
             self.shake_window()
             Messagebox.show_error("Usuario o contraseña incorrectos.", "Error de Acceso", parent=self)
