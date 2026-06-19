@@ -9,7 +9,7 @@ echo Generando ADA en modo ONEDIR (RAPIDO)
 echo ========================================
 echo.
 
-pyinstaller --onedir --windowed --name="ADA_PilotoAuto_v5_Fast" --icon="VicTor.ico" --add-data="VicTor.ico;." --add-data="credentials_gebilo.json;." --add-data="sucursales_history.py;." --hidden-import=ttkbootstrap --hidden-import=babel.numbers --hidden-import=gspread --hidden-import=google.oauth2.service_account --hidden-import=googleapiclient.discovery --collect-all ttkbootstrap "ADA - Piloto Auto v5.py"
+pyinstaller --onedir --windowed --name="ADA_PilotoAuto_v5_3_1" --icon="VicTor.ico" --add-data="VicTor.ico;." --add-data="credentials_gebilo.json;." --add-data="sucursales_history.py;." --hidden-import=ttkbootstrap --hidden-import=babel.numbers --hidden-import=gspread --hidden-import=google.oauth2.service_account --hidden-import=googleapiclient.discovery --collect-all ttkbootstrap "ADA - Piloto Auto v5.py"
 
 echo.
 echo ========================================

@@ -35,7 +35,7 @@ ADMIN_EMAIL = "vdominguez@infoplazas.org.pa"
 # Asocia el nombre de la regional con el nombre real de su carpeta
 REGION_FOLDER_MAP = {
     "Los Santos": "BD_Azuero",
-    "Chiriqui": "BD_Chiriqui",
+    "Chiriquí": "BD_Chiriqui",
     "Veraguas": "BD_Veraguas",
     "Panamá": "BD_Panamá"
 }
@@ -225,7 +225,7 @@ def limpiar_caracteres_invalidos(df):
 def obtener_regional(nombre_carpeta_raiz):
     """ Determina la regional basada en el nombre de la carpeta raíz. """
     if "Azuero" in nombre_carpeta_raiz: return "Los Santos"
-    if "Chiriqui" in nombre_carpeta_raiz: return "Chiriqui"
+    if "Chiriqui" in nombre_carpeta_raiz or "Chiriquí" in nombre_carpeta_raiz: return "Chiriquí"
     if "Veraguas" in nombre_carpeta_raiz: return "Veraguas"
     if "Panamá" in nombre_carpeta_raiz: return "Panamá"
     return "Desconocida"
@@ -374,6 +374,11 @@ def procesar_bases_de_datos(ruta_carpeta_raiz, password, start_date, end_date, a
         datos, useraccount_dict, error = extraer_datos_db(archivo_seleccionado, password, start_date, end_date, app_instance)
 
         if datos is not None and not datos.empty:
+            # Filtrar registros con fechas anteriores a 1900
+            if 'DATETIME' in datos.columns and pd.api.types.is_datetime64_any_dtype(datos['DATETIME']):
+                datos = datos[datos['DATETIME'].dt.year >= 1900]
+
+        if datos is not None and not datos.empty:
             datos['source_folder'] = os.path.basename(carpeta)
             datos_analizados = analizar_itemname(datos, useraccount_dict)
             todos_los_datos.append(datos_analizados)
@@ -445,6 +450,7 @@ def procesar_bases_de_datos(ruta_carpeta_raiz, password, start_date, end_date, a
 
     # Limpieza final
     datos_combinados = limpiar_caracteres_invalidos(datos_combinados)
+    reporte_incidentes_df = limpiar_caracteres_invalidos(reporte_incidentes_df)
 
     return datos_combinados, reporte_incidentes_df
         
@@ -459,17 +465,125 @@ def generar_resumen(datos):
     resumen_agg['Total'] = resumen_agg[['Primaria', 'Secundaria', 'Universitario', 'Docente', 'Tercera Edad', 'Público General']].sum(axis=1)
     return resumen_agg[['Infoplaza', 'Año', 'Mes', 'Masculino', 'Femenino', 'Primaria', 'Secundaria', 'Universitario', 'Docente', 'Tercera Edad', 'Público General', 'Total']]
 
-def guardar_en_excel(datos, reporte_incidentes, resumen, archivo_salida):
+def generar_resumen_cruzado(datos):
+    if datos.empty: return pd.DataFrame()
+    
+    # Crear un DataFrame temporal para no afectar el original
+    df = datos.copy()
+    if 'year' not in df.columns:
+        df['year'] = df['DATETIME'].dt.year
+    if 'month' not in df.columns:
+        df['month'] = df['DATETIME'].dt.month
+        
+    # Filtrar meses sin datos
+    df = df[df['TIPO U'] != 'S/D']
+    if df.empty: return pd.DataFrame()
+
+    # Agrupar y calcular totales
+    resumen_agg = df.groupby(['source_folder', 'year', 'month', 'TIPO U']).agg(
+        Masculino=('SEXO', lambda x: (x == 'M').sum()),
+        Femenino=('SEXO', lambda x: (x == 'F').sum())
+    ).reset_index()
+
+    resumen_agg['Total'] = resumen_agg['Masculino'] + resumen_agg['Femenino']
+    resumen_agg['Mes'] = resumen_agg['month'].apply(lambda x: datetime(1900, x, 1).strftime('%B').capitalize())
+
+    # Mapear TIPO U
+    tipo_map = {
+        'P': 'Primaria', 'S': 'Secundaria', 'U': 'Universitario',
+        'D': 'Docente', 'TE': 'Tercera Edad', 'PG': 'Público General'
+    }
+    resumen_agg['TIPO U'] = resumen_agg['TIPO U'].map(tipo_map).fillna(resumen_agg['TIPO U'])
+
+    resumen_agg.rename(columns={'source_folder': 'Infoplaza', 'year': 'Año', 'TIPO U': 'Tipo Usuario'}, inplace=True)
+    
+    return resumen_agg[['Infoplaza', 'Año', 'Mes', 'Tipo Usuario', 'Masculino', 'Femenino', 'Total']]
+
+def guardar_en_excel(datos, reporte_incidentes, resumen, archivo_salida, resumen_cruzado=None):
+    import traceback
     try:
         resumen_servicios = generar_resumen_servicios(datos)
         with pd.ExcelWriter(archivo_salida, engine='openpyxl') as writer:
-            datos.to_excel(writer, sheet_name='Datos Completos', index=False)
+            # Dividir "Datos Completos" si excede el límite de filas de Excel (aprox 1M)
+            limite_filas = 1000000
+            if len(datos) > limite_filas:
+                num_partes = (len(datos) // limite_filas) + 1
+                for i in range(num_partes):
+                    inicio = i * limite_filas
+                    fin = inicio + limite_filas
+                    chunk = datos.iloc[inicio:fin]
+                    nombre_hoja = f'Datos Completos P{i+1}'
+                    chunk.to_excel(writer, sheet_name=nombre_hoja, index=False)
+            else:
+                datos.to_excel(writer, sheet_name='Datos Completos', index=False)
+                
             resumen.to_excel(writer, sheet_name='Resumen', index=False)
             if not resumen_servicios.empty:
                 resumen_servicios.to_excel(writer, sheet_name='Servicios', index=False)
+            if resumen_cruzado is not None and not resumen_cruzado.empty:
+                resumen_cruzado.to_excel(writer, sheet_name='Resumen Tipo usuario y género', index=False)
+                
+                # Fase 4: Formateo básico a la nueva sheet
+                worksheet = writer.sheets['Resumen Tipo usuario y género']
+                from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+                from openpyxl.utils import get_column_letter
+                header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+                header_font = Font(color="FFFFFF", bold=True)
+                thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+                
+                for col_idx, col in enumerate(resumen_cruzado.columns, 1):
+                    cell = worksheet.cell(row=1, column=col_idx)
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                    cell.border = thin_border
+                    
+                    max_length = max(resumen_cruzado[col].astype(str).map(len).max(), len(col)) + 2
+                    worksheet.column_dimensions[get_column_letter(col_idx)].width = max_length
+                
+                for r_idx, row in enumerate(worksheet.iter_rows(min_row=2, max_row=worksheet.max_row, min_col=1, max_col=7), 2):
+                    for cell in row:
+                        cell.border = thin_border
+                        if isinstance(cell.value, (int, float)):
+                            cell.number_format = '#,##0'
+
             reporte_incidentes.to_excel(writer, sheet_name='Reporte Incidentes', index=False)
         logging.info(f"Archivo guardado en {archivo_salida}"); return True
-    except Exception as e: logging.error(f"Error al guardar Excel: {e}"); return False
+    except Exception as e: 
+        logging.error(f"Error al guardar Excel: {e}\n{traceback.format_exc()}")
+        return False
+
+def redimensionar_hoja_google_sheets(client, sheet_id, sheet_name, num_rows, num_cols):
+    try:
+        sheet_metadata = client.spreadsheets().get(spreadsheetId=sheet_id).execute()
+        sheets = sheet_metadata.get('sheets', '')
+        sheet_id_num = None
+        for s in sheets:
+            if s['properties']['title'] == sheet_name:
+                sheet_id_num = s['properties']['sheetId']
+                break
+        if sheet_id_num is not None:
+            num_rows = max(1, num_rows)
+            num_cols = max(1, num_cols)
+            body = {
+                'requests': [
+                    {
+                        'updateSheetProperties': {
+                            'properties': {
+                                'sheetId': sheet_id_num,
+                                'gridProperties': {
+                                    'rowCount': num_rows,
+                                    'columnCount': num_cols
+                                }
+                            },
+                            'fields': 'gridProperties(rowCount,columnCount)'
+                        }
+                    }
+                ]
+            }
+            client.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body=body).execute()
+    except Exception as re:
+        logging.warning(f"No se pudo redimensionar la hoja '{sheet_name}': {re}")
 
 def subir_datos_a_google_sheets(resumen_df, nombre_carpeta_raiz):
     try:
@@ -482,7 +596,7 @@ def subir_datos_a_google_sheets(resumen_df, nombre_carpeta_raiz):
             body = {'requests': [{'addSheet': {'properties': {'title': nombre_carpeta_raiz}}}]}; client.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body=body).execute()
         range_name = f"{nombre_carpeta_raiz}!A:Z"; result = client.spreadsheets().values().get(spreadsheetId=sheet_id, range=range_name).execute(); values = result.get('values', [])
         numeric_cols = ['Año', 'Masculino', 'Femenino', 'Primaria', 'Secundaria', 'Universitario', 'Docente', 'Tercera Edad', 'Público General', 'Total']
-        if values and len(values[0]) > 0:
+        if values and len(values[0]) > 0 and 'Infoplaza' in values[0]:
             df_hoja = pd.DataFrame(values[1:], columns=values[0])
             for col in numeric_cols:
                 if col in df_hoja.columns: df_hoja[col] = pd.to_numeric(df_hoja[col], errors='coerce').fillna(0).astype(int)
@@ -501,10 +615,14 @@ def subir_datos_a_google_sheets(resumen_df, nombre_carpeta_raiz):
             if col not in df_hoja.columns: df_hoja[col] = 0
             df_hoja[col] = pd.to_numeric(df_hoja[col], errors='coerce').fillna(0).astype(int)
         df_hoja['Total'] = df_hoja[columnas_a_sumar].sum(axis=1)
-        client.spreadsheets().values().clear(spreadsheetId=sheet_id, range=nombre_carpeta_raiz).execute()
         for col in numeric_cols:
              if col in df_hoja.columns: df_hoja[col] = pd.to_numeric(df_hoja[col], errors='coerce').fillna(0).astype(int)
         valores_actualizados = [df_hoja.columns.tolist()] + df_hoja.where(pd.notna(df_hoja), None).values.tolist()
+        
+        # Redimensionar la hoja antes de escribir para liberar celdas del limite de 10M
+        redimensionar_hoja_google_sheets(client, sheet_id, nombre_carpeta_raiz, len(valores_actualizados), len(valores_actualizados[0]))
+        
+        client.spreadsheets().values().clear(spreadsheetId=sheet_id, range=nombre_carpeta_raiz).execute()
         body = {'values': valores_actualizados}
         client.spreadsheets().values().update(spreadsheetId=sheet_id, range=f"{nombre_carpeta_raiz}!A1", valueInputOption='USER_ENTERED', body=body).execute()
         logging.info(f"Datos actualizados y subidos a la hoja: {nombre_carpeta_raiz}"); return True
@@ -567,8 +685,12 @@ def subir_historial_sincronizacion(nuevo_historial_df, nombre_carpeta_raiz):
         df_final = df_final[['Fecha y Hora', 'Sucursal', 'FechaSincronizacion', 'DiasSinSinc', 'Observación']]
         
         # 5. Escribir datos de vuelta a la hoja
-        client.spreadsheets().values().clear(spreadsheetId=sheet_id, range=sheet_name).execute()
         valores_actualizados = [df_final.columns.tolist()] + df_final.where(pd.notna(df_final), None).values.tolist()
+        
+        # Redimensionar la hoja antes de escribir para liberar celdas del limite de 10M
+        redimensionar_hoja_google_sheets(client, sheet_id, sheet_name, len(valores_actualizados), len(valores_actualizados[0]))
+        
+        client.spreadsheets().values().clear(spreadsheetId=sheet_id, range=sheet_name).execute()
         body = {'values': valores_actualizados}
         client.spreadsheets().values().update(spreadsheetId=sheet_id, range=f"{sheet_name}!A1", valueInputOption='USER_ENTERED', body=body).execute()
         
@@ -733,8 +855,12 @@ def subir_porcentajes_sincronizacion(reporte_df, regional):
             df_google = pd.DataFrame([nuevo_registro])
         
         # 6. Escribir datos de vuelta a Google Sheets
-        client.spreadsheets().values().clear(spreadsheetId=sheet_id, range=sheet_name).execute()
         valores_actualizados = [df_google.columns.tolist()] + df_google.where(pd.notna(df_google), None).values.tolist()
+        
+        # Redimensionar la hoja antes de escribir para liberar celdas del limite de 10M
+        redimensionar_hoja_google_sheets(client, sheet_id, sheet_name, len(valores_actualizados), len(valores_actualizados[0]))
+        
+        client.spreadsheets().values().clear(spreadsheetId=sheet_id, range=sheet_name).execute()
         body = {'values': valores_actualizados}
         client.spreadsheets().values().update(
             spreadsheetId=sheet_id,
@@ -818,13 +944,13 @@ def obtener_promedios_mensuales_sheets(regional):
 
 def enviar_correo_notificacion(asunto, cuerpo_html, destinatarios, archivo_adjunto=None):
     """
-    Se conecta al servidor SMTP y envía un correo HTML, opcionalmente con un archivo adjunto.
+    Se conecta al servidor SMTP y envía un correo HTML, opcionalmente con un archivo o archivos adjuntos.
 
     Args:
         asunto (str): El asunto del correo.
         cuerpo_html (str): El contenido del correo en formato HTML.
         destinatarios (list): Una lista de las direcciones de correo de los destinatarios.
-        archivo_adjunto (str, optional): La ruta completa al archivo que se desea adjuntar. Por defecto es None.
+        archivo_adjunto (str/list/tuple, optional): La ruta o lista de rutas completas a los archivos a adjuntar. Por defecto es None.
     """
     # --- Credenciales configuradas ---
     remitente = "victorpty999@gmail.com"
@@ -845,18 +971,20 @@ def enviar_correo_notificacion(asunto, cuerpo_html, destinatarios, archivo_adjun
     msg.set_content("Este correo contiene formato HTML. Por favor, actívelo para ver el contenido.")
     msg.add_alternative(cuerpo_html, subtype='html')
     
- 
- # --- NUEVO: Lógica para adjuntar el archivo ---
-    if archivo_adjunto and os.path.exists(archivo_adjunto):
-        try:
-            with open(archivo_adjunto, 'rb') as f:
-                archivo_data = f.read()
-                archivo_nombre = os.path.basename(archivo_adjunto)
-            # Adjunta el archivo al mensaje
-            msg.add_attachment(archivo_data, maintype='application', subtype='octet-stream', filename=archivo_nombre)
-            logging.info(f"Archivo adjuntado al correo: {archivo_nombre}")
-        except Exception as e:
-            logging.error(f"No se pudo adjuntar el archivo {archivo_adjunto}: {e}")
+    # --- Lógica para adjuntar archivo(s) ---
+    if archivo_adjunto:
+        archivos = [archivo_adjunto] if isinstance(archivo_adjunto, str) else archivo_adjunto
+        for adjunto in archivos:
+            if adjunto and os.path.exists(adjunto):
+                try:
+                    with open(adjunto, 'rb') as f:
+                        archivo_data = f.read()
+                        archivo_nombre = os.path.basename(adjunto)
+                    # Adjunta el archivo al mensaje
+                    msg.add_attachment(archivo_data, maintype='application', subtype='octet-stream', filename=archivo_nombre)
+                    logging.info(f"Archivo adjuntado al correo: {archivo_nombre}")
+                except Exception as e:
+                    logging.error(f"No se pudo adjuntar el archivo {adjunto}: {e}")
 
     MAX_RETRIES = 10
     RETRY_DELAY = 60
@@ -935,6 +1063,9 @@ def ejecutar_tarea_automatica(app_instance, regiones_seleccionadas):
 
         logging.info(f"Procesamiento de {nombre_regional} completado. Pausa de 10 segundos.")
         time.sleep(10)
+
+    # Fin del bucle principal
+
 
 
 def calcular_proxima_ejecucion(dias_seleccionados_str):
@@ -1134,6 +1265,7 @@ class App(ttk.Window):
         # Variables de estado
         self.carpeta_entrada = tk.StringVar()
         self.resumen = pd.DataFrame()
+        self.resumen_cruzado = pd.DataFrame()
         self.piloto_activo = False
         self.hilo_piloto = None
         self.animation_window = None
@@ -1143,6 +1275,8 @@ class App(ttk.Window):
         self.last_manual_run_id = None
         self.recipients_list = [] 
         self.editing_email = None # Variable para rastrear qué correo se está editando 
+        self.supabase_url = "https://jcozaaifpfukqlypfuqq.supabase.co"
+        self.supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impjb3phYWlmcGZ1a3FseXBmdXFxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MDY4Mjg4MiwiZXhwIjoyMDk2MjU4ODgyfQ.80jkincEydxGbuhqKYEjJBOf1LJ3TkhthVgl0sPah8k"
 
         self.create_widgets()
 
@@ -1244,10 +1378,10 @@ class App(ttk.Window):
     def create_history_table(self, parent):
         cols = ('id', 'fecha_hora', 'origen', 'regional', 'periodo', 'archivos', 'registros', 'proceso', 'subida', 'correo_enviado', 'incidencias')
         self.history_tree = ttk.Treeview(parent, columns=cols, show='headings', bootstyle=DARK)
-        headings = {'id': '#', 'fecha_hora': 'Fecha y Hora', 'origen': 'Origen', 'regional': 'Regional', 'periodo': 'Periodo', 'archivos': 'Archivos', 'registros': 'Registros', 'proceso': 'Completo', 'subida': 'Subido', 'correo_enviado': 'Correo Enviado', 'incidencias': 'Incidencias'}
+        headings = {'id': '#', 'fecha_hora': 'Fecha y Hora', 'origen': 'Origen', 'regional': 'Regional', 'periodo': 'Periodo', 'archivos': 'Archivos', 'registros': 'Registros', 'proceso': 'Completo', 'subida': 'Sheet/Supa', 'correo_enviado': 'Correo Enviado', 'incidencias': 'Incidencias'}
         for col in cols: self.history_tree.heading(col, text=headings[col], command=lambda c=col: self.sort_treeview(self.history_tree, c, False))
         
-        widths = {'id': 40, 'fecha_hora': 140, 'origen': 80, 'regional': 100, 'periodo': 160, 'archivos': 60, 'registros': 70, 'proceso': 70, 'subida': 60, 'correo_enviado': 80, 'incidencias': 200}
+        widths = {'id': 40, 'fecha_hora': 140, 'origen': 80, 'regional': 100, 'periodo': 160, 'archivos': 60, 'registros': 70, 'proceso': 70, 'subida': 80, 'correo_enviado': 80, 'incidencias': 200}
         for col, width in widths.items(): self.history_tree.column(col, width=width, anchor=CENTER if col not in ['incidencias'] else W)
         
         self.history_tree.pack(side=LEFT, fill=BOTH, expand=True)
@@ -1313,7 +1447,7 @@ class App(ttk.Window):
 
         # Regional (Opción "Todas" agregada)
         ttk.Label(form_frame, text="Regional:").pack(side=LEFT, padx=(0, 5))
-        regionales = ["Todas", "Los Santos", "Chiriqui", "Veraguas", "Panamá"]
+        regionales = ["Todas", "Los Santos", "Chiriquí", "Veraguas", "Panamá"]
         self.recipient_regional = ttk.Combobox(form_frame, values=regionales, state="readonly", width=20)
         self.recipient_regional.pack(side=LEFT, padx=(0, 10))
 
@@ -1553,6 +1687,12 @@ class App(ttk.Window):
         self.show_animation("Iniciando Proceso...")
 
         # Inicialización de variables
+        run_id = datetime.now().timestamp()
+        if origen == 'Manual':
+            self.last_manual_run_id = run_id
+        else:
+            self.current_auto_run_id = run_id
+
         periodo, proceso_ok, subida_resumen_ok = "N/A", False, False
         incidencias_resumen, reporte_incidentes = "Error no especificado", pd.DataFrame()
         datos_combinados = pd.DataFrame()
@@ -1585,6 +1725,9 @@ class App(ttk.Window):
                 ruta_carpeta, password, fecha_inicio_dt, fecha_fin_query, self
             )
             self.resumen = generar_resumen(datos_combinados)
+            self.resumen_servicios = generar_resumen_servicios(datos_combinados)
+            self.resumen_cruzado = generar_resumen_cruzado(datos_combinados)
+            self.reporte_incidentes = reporte_incidentes
             incidencias_resumen = self.summarize_incidents(reporte_incidentes)
 
             if modo_automatico:
@@ -1611,9 +1754,22 @@ class App(ttk.Window):
             if archivo_salida_final and not self.resumen.empty:
                 if modo_automatico:
                     self.animation_window.update_status("Guardando archivo Excel...")
-                proceso_ok = guardar_en_excel(datos_combinados, reporte_incidentes, self.resumen, archivo_salida_final)
+                proceso_ok = guardar_en_excel(datos_combinados, reporte_incidentes, self.resumen, archivo_salida_final, self.resumen_cruzado)
+                
                 if proceso_ok:
-                    self.last_manual_run_id = datetime.now().timestamp() if not modo_automatico else None
+                    # Crear una versión reducida para el correo
+                    archivo_correo = archivo_salida_final.replace('.xlsx', '_Resumen.xlsx')
+                    try:
+                        with pd.ExcelWriter(archivo_correo, engine='openpyxl') as writer:
+                            self.resumen.to_excel(writer, sheet_name='Resumen', index=False)
+                            if not self.resumen_servicios.empty:
+                                self.resumen_servicios.to_excel(writer, sheet_name='Servicios', index=False)
+                            if not getattr(self, 'resumen_cruzado', pd.DataFrame()).empty:
+                                self.resumen_cruzado.to_excel(writer, sheet_name='Resumen Tipo usuario y género', index=False)
+                    except Exception as e:
+                        logging.error(f"Error generando Excel de correo: {e}")
+                        archivo_correo = archivo_salida_final
+
                     if not modo_automatico:
                         self.btn_subir_g.config(state=NORMAL)
                     else:
@@ -1628,29 +1784,33 @@ class App(ttk.Window):
 
         finally:
             # Enviar correo (una sola vez, asíncrono)
-            if proceso_ok:
-                asunto_correo = f"Estatus de Sincronización - Regional {regional}"
-                cuerpo_html_correo = self.construir_cuerpo_correo(reporte_incidentes, regional)
-                destinatarios_filtrados = [r['correo'] for r in self.recipients_list if r['regional'] in [regional, "Todas"] and r.get('activo', True)]
-                threading.Thread(
-                    target=enviar_correo_notificacion,
-                    args=(asunto_correo, cuerpo_html_correo, destinatarios_filtrados, archivo_salida_final),
-                    daemon=True
-                ).start()
-                correo_enviado_ok = True
+            if origen != 'Prueba':
+                if proceso_ok:
+                    asunto_correo = f"Estatus de Sincronización - Regional {regional}"
+                    cuerpo_html_correo = self.construir_cuerpo_correo(reporte_incidentes, regional)
+                    destinatarios_filtrados = [r['correo'] for r in self.recipients_list if r['regional'] in [regional, "Todas"] and r.get('activo', True)]
+                    threading.Thread(
+                        target=enviar_correo_notificacion,
+                        args=(asunto_correo, cuerpo_html_correo, destinatarios_filtrados, locals().get('archivo_correo', archivo_salida_final)),
+                        daemon=True
+                    ).start()
+                    correo_enviado_ok = True
+                else:
+                    asunto_correo = f"FALLO en Ejecución del Analizador - {regional}"
+                    cuerpo_html_correo = self.construir_cuerpo_correo_de_fallo(regional, periodo, origen, incidencias_resumen)
+                    destinatario_admin = [ADMIN_EMAIL]
+                    threading.Thread(
+                        target=enviar_correo_notificacion,
+                        args=(asunto_correo, cuerpo_html_correo, destinatario_admin),
+                        daemon=True
+                    ).start()
+                    correo_enviado_ok = True
             else:
-                asunto_correo = f"FALLO en Ejecución del Analizador - {regional}"
-                cuerpo_html_correo = self.construir_cuerpo_correo_de_fallo(regional, periodo, origen, incidencias_resumen)
-                destinatario_admin = [ADMIN_EMAIL]
-                threading.Thread(
-                    target=enviar_correo_notificacion,
-                    args=(asunto_correo, cuerpo_html_correo, destinatario_admin),
-                    daemon=True
-                ).start()
-                correo_enviado_ok = True
+                correo_enviado_ok = False
 
             # Registrar en historial
-            entry_id = self.last_manual_run_id if origen == 'Manual' else datetime.now().timestamp()
+            entry_id = run_id
+            subida_str = f"{'Sí' if subida_resumen_ok else 'No'}/No"
             history_entry = {
                 "id": entry_id,
                 "fecha_hora": datetime.now().strftime('%d/%m/%Y %H:%M:%S'),
@@ -1660,11 +1820,10 @@ class App(ttk.Window):
                 "archivos": len(reporte_incidentes),
                 "registros": len(datos_combinados),
                 "proceso": "Sí" if proceso_ok else "No",
-                "subida": "Sí" if subida_resumen_ok else "No",
+                "subida": subida_str,
                 "correo_enviado": "Sí" if correo_enviado_ok else "No",
                 "incidencias": incidencias_resumen
             }
-            self.after(0, lambda: self.add_history_entry(history_entry))
             self.after(0, lambda: self.add_history_entry(history_entry))
             self.after(0, lambda: self.update_incidents_table(reporte_incidentes))
 
@@ -1692,6 +1851,202 @@ class App(ttk.Window):
     
     
 
+    def extraer_numero_nombre(self, folder_name):
+        import re
+        match = re.match(r'^(\d+)\s*-\s*(.+)$', str(folder_name))
+        if match:
+            return int(match.group(1)), match.group(2).strip()
+        return None, str(folder_name)
+
+    def subir_a_supabase(self, df_servicios, df_demografico, regional, reporte_incidentes=None, df_cruzado=None):
+        if not getattr(self, 'supabase_url', None) or not getattr(self, 'supabase_key', None):
+            logging.warning("Credenciales de Supabase no configuradas. Saltando sincronización.")
+            return False
+            
+        import requests
+        import json
+        import re
+        import glob
+        
+        regional_normalizada = "Chiriquí" if regional == "Chiriqui" else regional
+        
+        # 1. Escanear carpetas físicas para sincronizar la tabla infoplazas
+        ruta_carpeta = self.carpeta_entrada.get()
+        if not ruta_carpeta or not os.path.exists(ruta_carpeta):
+            logging.warning(f"Ruta de carpeta no válida para Supabase: {ruta_carpeta}")
+            return False
+            
+        try:
+            subcarpetas = [f.path for f in os.scandir(ruta_carpeta) if f.is_dir()]
+            infoplazas_payload = []
+            for carpeta in subcarpetas:
+                folder_name = os.path.basename(carpeta)
+                num, name = self.extraer_numero_nombre(folder_name)
+                if num is None:
+                    continue
+                
+                estado = "Activa"
+                if glob.glob(os.path.join(carpeta, "CERRADA DEFINITIVAMENTE.txt")):
+                    estado = "Cerrada Definitivamente"
+                    
+                infoplazas_payload.append({
+                    "numero": num,
+                    "nombre": name,
+                    "nombre_carpeta": folder_name,
+                    "regional": regional_normalizada,
+                    "estado": estado
+                })
+                
+            headers = {
+                "apikey": self.supabase_key,
+                "Authorization": f"Bearer {self.supabase_key}",
+                "Content-Type": "application/json"
+            }
+            
+            # Subir infoplazas
+            if infoplazas_payload:
+                url_rpc_info = f"{self.supabase_url.rstrip('/')}/rest/v1/rpc/upsert_infoplazas"
+                res = requests.post(url_rpc_info, headers=headers, json={"payload": infoplazas_payload})
+                if res.status_code not in [200, 201, 204]:
+                    logging.error(f"Error al subir infoplazas a Supabase: {res.status_code} - {res.text}")
+                else:
+                    logging.info(f"Sincronizadas {len(infoplazas_payload)} infoplazas en Supabase.")
+                    
+            # 2. Subir resumen de servicios
+            servicios_payload = []
+            servicios_map = {
+                'TALLER': 'taller', 'REUNIÓN': 'reunion', 'CONSULTA': 'consulta',
+                'VENTA': 'venta', 'SCAN': 'scan', 'CORREO': 'correo',
+                'TEL': 'tel', 'LT': 'lt', 'IMPRESIÓN': 'impresion',
+                'COPIA': 'copia', 'CINE': 'cine', 'OTROS': 'otros',
+                'USO DE PC': 'uso_de_pc'
+            }
+            
+            if df_servicios is not None and not df_servicios.empty:
+                for _, row in df_servicios.iterrows():
+                    infoplaza_str = str(row['Infoplaza'])
+                    num, _ = self.extraer_numero_nombre(infoplaza_str)
+                    if num is None:
+                        continue
+                    record = {
+                        'numero_infoplaza': num,
+                        'regional': regional_normalizada,
+                        'anio': int(row['Año']),
+                        'mes': str(row['Mes']).strip(),
+                        'total': int(row['Total'])
+                    }
+                    for py_col, db_col in servicios_map.items():
+                        record[db_col] = int(row.get(py_col, 0))
+                    servicios_payload.append(record)
+                    
+            if servicios_payload:
+                url_rpc_servicios = f"{self.supabase_url.rstrip('/')}/rest/v1/rpc/upsert_resumen_servicios"
+                res = requests.post(url_rpc_servicios, headers=headers, json={"payload": servicios_payload})
+                if res.status_code not in [200, 201, 204]:
+                    logging.error(f"Error al subir resumen_servicios a Supabase: {res.status_code} - {res.text}")
+                else:
+                    logging.info(f"Sincronizado resumen_servicios en Supabase ({len(servicios_payload)} filas).")
+                    
+            # 3. Subir resumen demográfico
+            demograficos_payload = []
+            demograficos_map = {
+                'Masculino': 'masculino', 'Femenino': 'femenino',
+                'Primaria': 'primaria', 'Secundaria': 'secundaria',
+                'Universitario': 'universitario', 'Docente': 'docente',
+                'Tercera Edad': 'tercera_edad', 'Público General': 'publico_general'
+            }
+            
+            if df_demografico is not None and not df_demografico.empty:
+                for _, row in df_demografico.iterrows():
+                    infoplaza_str = str(row['Infoplaza'])
+                    num, _ = self.extraer_numero_nombre(infoplaza_str)
+                    if num is None:
+                        continue
+                    record = {
+                        'numero_infoplaza': num,
+                        'regional': regional_normalizada,
+                        'anio': int(row['Año']),
+                        'mes': str(row['Mes']).strip(),
+                        'total': int(row['Total'])
+                    }
+                    for py_col, db_col in demograficos_map.items():
+                        record[db_col] = int(row.get(py_col, 0))
+                    demograficos_payload.append(record)
+                    
+            if demograficos_payload:
+                url_rpc_demo = f"{self.supabase_url.rstrip('/')}/rest/v1/rpc/upsert_resumen_demografico"
+                res = requests.post(url_rpc_demo, headers=headers, json={"payload": demograficos_payload})
+                if res.status_code not in [200, 201, 204]:
+                    logging.error(f"Error al subir resumen_demografico a Supabase: {res.status_code} - {res.text}")
+                else:
+                    logging.info(f"Sincronizado resumen_demografico en Supabase ({len(demograficos_payload)} filas).")
+                    
+            # 3.5 Subir resumen tipo usuario y genero (cruzado)
+            cruzado_payload = []
+            
+            if df_cruzado is not None and not df_cruzado.empty:
+                for _, row in df_cruzado.iterrows():
+                    infoplaza_str = str(row['Infoplaza'])
+                    num, _ = self.extraer_numero_nombre(infoplaza_str)
+                    if num is None:
+                        continue
+                    record = {
+                        'numero_infoplaza': num,
+                        'regional': regional_normalizada,
+                        'anio': int(row['Año']),
+                        'mes': str(row['Mes']).strip(),
+                        'tipo_usuario': str(row['Tipo Usuario']),
+                        'masculino': int(row.get('Masculino', 0)),
+                        'femenino': int(row.get('Femenino', 0)),
+                        'total': int(row['Total'])
+                    }
+                    cruzado_payload.append(record)
+                    
+            if cruzado_payload:
+                url_rpc_cruzado = f"{self.supabase_url.rstrip('/')}/rest/v1/rpc/upsert_resumen_tipo_usuario_genero"
+                res = requests.post(url_rpc_cruzado, headers=headers, json={"payload": cruzado_payload})
+                if res.status_code not in [200, 201, 204]:
+                    logging.error(f"Error al subir resumen_tipo_usuario_genero a Supabase: {res.status_code} - {res.text}")
+                else:
+                    logging.info(f"Sincronizado resumen_tipo_usuario_genero en Supabase ({len(cruzado_payload)} filas).")
+                    
+            # 4. Subir historial de sincronización
+            if reporte_incidentes is not None and not reporte_incidentes.empty:
+                historial_payload = []
+                for _, row in reporte_incidentes.iterrows():
+                    sucursal_str = str(row['Carpeta'])
+                    dias_val = row.get('Días sin Sincronizar', 0)
+                    if dias_val == 'N/A' or pd.isna(dias_val):
+                        dias_val = 0
+                    else:
+                        try:
+                            dias_val = int(dias_val)
+                        except:
+                            dias_val = 0
+                            
+                    obs_val = str(row.get('Observación', '')).strip()
+                    
+                    historial_payload.append({
+                        'fecha_reporte': datetime.now().strftime('%Y-%m-%d'),
+                        'regional': regional_normalizada,
+                        'sucursal': sucursal_str,
+                        'dias_sin_sinc': dias_val,
+                        'observacion': obs_val
+                    })
+                    
+                if historial_payload:
+                    url_historial = f"{self.supabase_url.rstrip('/')}/rest/v1/historial_sincronizacion"
+                    res = requests.post(url_historial, headers=headers, json=historial_payload)
+                    if res.status_code not in [200, 201, 204]:
+                        logging.error(f"Error al subir historial_sincronizacion a Supabase: {res.status_code} - {res.text}")
+                    else:
+                        logging.info(f"Sincronizado historial_sincronizacion en Supabase ({len(historial_payload)} filas).")
+            
+            return True
+        except Exception as e:
+            logging.error(f"Excepción en subir_a_supabase: {e}")
+            return False
+
     def subir_resumen_a_sheets(self, modo_automatico=False):
         if self.resumen.empty:
             if not modo_automatico: Messagebox.show_warning("No hay datos de resumen para subir.", "Datos Vacíos", parent=self)
@@ -1702,13 +2057,32 @@ class App(ttk.Window):
         try:
             nombre_carpeta = os.path.basename(self.carpeta_entrada.get())
             subida_ok = subir_datos_a_google_sheets(self.resumen, nombre_carpeta)
+            
+            # --- SUBIDA EN PARALELO A SUPABASE (ASÍNCRONA VÍA HILO) ---
+            def run_supabase_upload():
+                supabase_ok = False
+                try:
+                    regional = obtener_regional(nombre_carpeta)
+                    supabase_ok = self.subir_a_supabase(
+                        getattr(self, 'resumen_servicios', pd.DataFrame()),
+                        self.resumen,
+                        regional,
+                        getattr(self, 'reporte_incidentes', None),
+                        getattr(self, 'resumen_cruzado', pd.DataFrame())
+                    )
+                except Exception as se:
+                    logging.error(f"Fallo al sincronizar con Supabase: {se}")
+                
+                # Actualizar el estatus en el historial con el callback combinado
+                entry_id = getattr(self, 'current_auto_run_id', None) if modo_automatico else self.last_manual_run_id
+                if entry_id is not None:
+                    self.actualizar_estado_subida_historial(entry_id, subida_ok, supabase_ok)
+
+            threading.Thread(target=run_supabase_upload, daemon=True).start()
+
             if subida_ok and not modo_automatico:
                 Messagebox.show_info(f"Los datos se han subido correctamente a la hoja '{nombre_carpeta}'.", "Subida Exitosa", parent=self)
                 self.status_label.config(text="Datos subidos a la nube.")
-                for entry in self.execution_history:
-                    if entry.get('id') == self.last_manual_run_id:
-                        entry['subida'] = 'Sí'; break
-                self.update_history_table(); self.save_settings()
             return subida_ok
         except Exception as e:
             logging.error(f"FALLO en subida a Google Sheets: {e}")
@@ -2026,13 +2400,277 @@ class App(ttk.Window):
         self.execution_history.insert(0, entry);
         if len(self.execution_history) > 100: self.execution_history.pop()
         self.update_history_table(); self.save_settings()
+        
+        def run_upload_db():
+            if not getattr(self, 'supabase_url', None) or not getattr(self, 'supabase_key', None):
+                return
+            try:
+                import requests
+                url = f"{self.supabase_url.rstrip('/')}/rest/v1/historial_ejecuciones"
+                headers = {
+                    "apikey": self.supabase_key,
+                    "Authorization": f"Bearer {self.supabase_key}",
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates"
+                }
+                payload = {
+                    "id": entry.get('id'),
+                    "fecha_hora": entry.get('fecha_hora', ''),
+                    "origen": entry.get('origen', ''),
+                    "regional": entry.get('regional', ''),
+                    "periodo": entry.get('periodo', ''),
+                    "archivos": int(entry.get('archivos', 0)),
+                    "registros": int(entry.get('registros', 0)),
+                    "proceso": entry.get('proceso', 'No'),
+                    "subida": entry.get('subida', 'No/No'),
+                    "correo_enviado": entry.get('correo_enviado', 'No'),
+                    "incidencias": entry.get('incidencias', '')
+                }
+                res = requests.post(url, headers=headers, json=payload)
+                if res.status_code not in [200, 201, 204]:
+                    logging.error(f"Error al subir historial_ejecuciones a Supabase: {res.status_code} - {res.text}")
+            except Exception as ex:
+                logging.error(f"Fallo al subir historial de ejecución a Supabase: {ex}")
+                
+        threading.Thread(target=run_upload_db, daemon=True).start()
 
     def update_history_table(self):
         for item in self.history_tree.get_children(): self.history_tree.delete(item)
         for i, entry in enumerate(self.execution_history):
             tag = 'oddrow' if i % 2 == 0 else 'evenrow'
-            values = (i + 1, entry.get('fecha_hora', ''), entry.get('origen', ''), entry.get('regional', ''), entry.get('periodo', ''), entry.get('archivos', ''), entry.get('registros', ''), entry.get('proceso', 'No'), entry.get('subida', 'No'), entry.get('correo_enviado', 'No'), entry.get('incidencias', ''))
+            subida_val = entry.get('subida', 'No')
+            if subida_val == 'Sí':
+                subida_val = 'Sí/No'
+            elif subida_val == 'No':
+                subida_val = 'No/No'
+            
+            values = (i + 1, entry.get('fecha_hora', ''), entry.get('origen', ''), entry.get('regional', ''), entry.get('periodo', ''), entry.get('archivos', ''), entry.get('registros', ''), entry.get('proceso', 'No'), subida_val, entry.get('correo_enviado', 'No'), entry.get('incidencias', ''))
             self.history_tree.insert('', END, values=values, tags=(tag,))
+
+    def actualizar_estado_subida_historial(self, entry_id, sheets_ok, supabase_ok):
+        target_entry = None
+        for entry in self.execution_history:
+            if entry.get('id') == entry_id:
+                sheets_str = "Sí" if sheets_ok else "No"
+                supabase_str = "Sí" if supabase_ok else "No"
+                entry['subida'] = f"{sheets_str}/{supabase_str}"
+                target_entry = entry
+                break
+        self.save_settings()
+        self.after(0, self.update_history_table)
+        
+        if target_entry:
+            def run_update_db():
+                if not getattr(self, 'supabase_url', None) or not getattr(self, 'supabase_key', None):
+                    return
+                try:
+                    import requests
+                    url = f"{self.supabase_url.rstrip('/')}/rest/v1/historial_ejecuciones"
+                    headers = {
+                        "apikey": self.supabase_key,
+                        "Authorization": f"Bearer {self.supabase_key}",
+                        "Content-Type": "application/json",
+                        "Prefer": "resolution=merge-duplicates"
+                    }
+                    payload = {
+                        "id": target_entry.get('id'),
+                        "fecha_hora": target_entry.get('fecha_hora', ''),
+                        "origen": target_entry.get('origen', ''),
+                        "regional": target_entry.get('regional', ''),
+                        "periodo": target_entry.get('periodo', ''),
+                        "archivos": int(target_entry.get('archivos', 0)),
+                        "registros": int(target_entry.get('registros', 0)),
+                        "proceso": target_entry.get('proceso', 'No'),
+                        "subida": target_entry.get('subida', 'No/No'),
+                        "correo_enviado": target_entry.get('correo_enviado', 'No'),
+                        "incidencias": target_entry.get('incidencias', '')
+                    }
+                    res = requests.post(url, headers=headers, json=payload)
+                    if res.status_code not in [200, 201, 204]:
+                        logging.error(f"Error al actualizar historial_ejecuciones a Supabase: {res.status_code} - {res.text}")
+                except Exception as ex:
+                    logging.error(f"Fallo al actualizar historial de ejecución en Supabase: {ex}")
+                    
+            threading.Thread(target=run_update_db, daemon=True).start()
+
+    def enviar_correo_consolidado_automatico(self):
+        if not getattr(self, 'resultados_piloto_actual', None):
+            return
+        
+        logging.info("PILOTO AUTOMÁTICO: Generando y enviando correo consolidado...")
+        fecha_actual = datetime.now().strftime('%d de %B de %Y')
+        asunto = f"Reporte Consolidado de Sincronización - Piloto Automático - {fecha_actual}"
+        
+        # Recopilar destinatarios
+        regiones_ejecutadas = [r['regional'] for r in self.resultados_piloto_actual]
+        destinatarios_set = set()
+        for rec in self.recipients_list:
+            if rec.get('activo', True):
+                if rec['regional'] == "Todas" or rec['regional'] in regiones_ejecutadas:
+                    destinatarios_set.add(rec['correo'])
+        
+        destinatarios = list(destinatarios_set)
+        if not destinatarios:
+            destinatarios = [ADMIN_EMAIL]
+            logging.warning(f"No hay destinatarios activos para las regionales ejecutadas. Enviando a respaldo admin: {ADMIN_EMAIL}")
+
+        # Construir tabla resumen general
+        filas_resumen = []
+        for r in self.resultados_piloto_actual:
+            estado_badge = '<span class="badge-exito" style="background-color: #c6f6d5; color: #22543d; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; display: inline-block;">ÉXITO</span>' if r['proceso_ok'] else '<span class="badge-fallo" style="background-color: #fed7d7; color: #742a2a; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; display: inline-block;">FALLO</span>'
+            excel_status = "Excel Adjuntado" if (r['proceso_ok'] and r['archivo_salida_final']) else "No generado"
+            filas_resumen.append(f"""
+            <tr>
+                <td style="padding: 12px; border-bottom: 1px solid #f0f0f0;"><strong>{r['regional']}</strong></td>
+                <td style="padding: 12px; border-bottom: 1px solid #f0f0f0;">{estado_badge}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #f0f0f0;">{r['periodo']}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #f0f0f0;">{r['incidencias_resumen']}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #f0f0f0;">{excel_status}</td>
+            </tr>
+            """)
+        
+        tabla_resumen_html = f"""
+        <table class="resumen-tabla" width="100%" style="border-collapse: collapse; width: 100%; background: white; margin-bottom: 20px;">
+            <thead>
+                <tr>
+                    <th style="background-color: #e2e8f0; color: #2d3748; padding: 12px; font-weight: 700; border-bottom: 2px solid #cbd5e0; text-align: left;">Regional</th>
+                    <th style="background-color: #e2e8f0; color: #2d3748; padding: 12px; font-weight: 700; border-bottom: 2px solid #cbd5e0; text-align: left;">Estado</th>
+                    <th style="background-color: #e2e8f0; color: #2d3748; padding: 12px; font-weight: 700; border-bottom: 2px solid #cbd5e0; text-align: left;">Periodo</th>
+                    <th style="background-color: #e2e8f0; color: #2d3748; padding: 12px; font-weight: 700; border-bottom: 2px solid #cbd5e0; text-align: left;">Resumen de Incidencias</th>
+                    <th style="background-color: #e2e8f0; color: #2d3748; padding: 12px; font-weight: 700; border-bottom: 2px solid #cbd5e0; text-align: left;">Archivo Excel</th>
+                </tr>
+            </thead>
+            <tbody>
+                {"".join(filas_resumen)}
+            </tbody>
+        </table>
+        """
+
+        # Construir secciones de detalle de cada regional
+        secciones_detalle = []
+        archivos_adjuntos = []
+        
+        for r in self.resultados_piloto_actual:
+            regional = r['regional']
+            if r['proceso_ok']:
+                if r['archivo_salida_final'] and os.path.exists(r['archivo_salida_final']):
+                    archivos_adjuntos.append(r['archivo_salida_final'])
+                
+                # Generar el cuerpo de correo individual para esta regional
+                cuerpo_ind = self.construir_cuerpo_correo(r['reporte_incidentes'], regional)
+                # Extraemos el contenido dentro de <div class="content">...</div>
+                content_start = cuerpo_ind.find('<div class="content">')
+                content_end = cuerpo_ind.rfind('</div>\n                <div class="footer">')
+                
+                if content_start != -1 and content_end != -1:
+                    inner_content = cuerpo_ind[content_start + len('<div class="content">'):content_end]
+                else:
+                    inner_content = cuerpo_ind
+                
+                # Quitar el saludo individual y la nota de archivo adjunto si están presentes
+                saludo_idx = inner_content.find('<strong>Buen')
+                if saludo_idx != -1:
+                    end_p_saludo = inner_content.find('</p>', saludo_idx)
+                    if end_p_saludo != -1:
+                        inner_content = inner_content[end_p_saludo + 4:]
+                
+                adjunto_idx = inner_content.find('<div class="attachment-note">')
+                if adjunto_idx != -1:
+                    end_div_adj = inner_content.find('</div>', adjunto_idx)
+                    if end_div_adj != -1:
+                        inner_content = inner_content[end_div_adj + 6:]
+                
+                secciones_detalle.append(f"""
+                <div class="regional-section" style="margin-top: 40px; border-top: 2px solid #e2e8f0; padding-top: 25px;">
+                    <div class="regional-title" style="font-size: 18px; font-weight: 700; color: #2c3e50; margin-bottom: 15px; padding-bottom: 5px; border-bottom: 2px solid #cbd5e0;">📍 Detalles Regional: {regional}</div>
+                    {inner_content}
+                </div>
+                """)
+            else:
+                secciones_detalle.append(f"""
+                <div class="regional-section" style="margin-top: 40px; border-top: 2px solid #e2e8f0; padding-top: 25px;">
+                    <div class="regional-title" style="font-size: 18px; font-weight: 700; color: #2c3e50; margin-bottom: 15px; padding-bottom: 5px; border-bottom: 2px solid #cbd5e0;">📍 Detalles Regional: {regional}</div>
+                    <div class="error-box" style="background-color: #fff5f5; border-left: 4px solid #e53e3e; border-radius: 8px; padding: 20px; color: #c53030; line-height: 1.8;">
+                        <strong>⚠️ Fallo en la Ejecución:</strong><br>
+                        Periodo: {r['periodo']}<br>
+                        Error: {r['incidencias_resumen']}<br>
+                        Por favor, revise los logs del sistema para más información detallada del problema.
+                    </div>
+                </div>
+                """)
+        
+        saludo = "Buen día" if datetime.now().hour < 12 else "Buenas tardes"
+        
+        cuerpo_html = f"""
+        <html>
+        <head>
+            <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style type="text/css">
+                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333; margin: 0; padding: 20px; background-color: #f5f7fa; }}
+                .email-container {{ max-width: 900px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 16px rgba(0,0,0,0.1); }}
+                .header {{ background-color: #4a5568; color: white; padding: 30px; text-align: left; }}
+                .content {{ padding: 30px; }}
+                table {{ border-collapse: collapse; width: 100%; background: white; margin-bottom: 20px; }}
+                th, td {{ text-align: left; padding: 12px 15px; border-bottom: 1px solid #f0f0f0; }}
+                th {{ background-color: #f8f9fa; font-weight: 600; color: #495057; font-size: 13px; text-transform: uppercase; }}
+                .resumen-tabla th {{ background-color: #e2e8f0; color: #2d3748; font-weight: 700; }}
+                .regional-section {{ margin-top: 40px; border-top: 2px solid #e2e8f0; padding-top: 25px; }}
+                .regional-title {{ font-size: 18px; font-weight: 700; color: #2c3e50; margin-bottom: 15px; padding-bottom: 5px; border-bottom: 2px solid #cbd5e0; }}
+                .error-box {{ background-color: #fff5f5; border-left: 4px solid #e53e3e; border-radius: 8px; padding: 20px; color: #c53030; line-height: 1.8; }}
+                .attachment-note {{ background-color: #ebf8ff; border-left: 4px solid #3182ce; padding: 12px 20px; border-radius: 8px; margin: 20px 0; font-size: 14px; color: #2b6cb0; }}
+                .info-box {{ background-color: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 8px; padding: 20px; margin: 20px 0; }}
+                .porc-sinc-container {{ background-color: #f5f7fa; border-radius: 12px; padding: 25px; margin: 25px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }}
+                .porc-sinc-title {{ font-size: 20px; font-weight: 700; color: #2c3e50; margin-bottom: 20px; text-align: center; padding-bottom: 15px; border-bottom: 3px solid #667eea; }}
+                .stat-card {{ background-color: white; border-radius: 10px; padding: 20px; margin: 10px 0; box-shadow: 0 3px 8px rgba(0,0,0,0.08); border-top: 4px solid #667eea; text-align: center; }}
+                .stat-value {{ font-size: 32px; font-weight: 700; color: #2c3e50; margin: 5px 0; }}
+                .stat-label {{ font-size: 12px; color: #7f8c8d; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }}
+                .exec-today-pct {{ font-size: 13px; color: #7f8c8d; background: #f0f2f5; display: inline-block; padding: 2px 10px; border-radius: 12px; margin-top: 8px; font-weight: 600; border: 1px solid #e1e4e8; }}
+                .info-note {{ background-color: #e8f5e9; border-left: 4px solid #4caf50; padding: 15px 20px; border-radius: 8px; margin: 20px 0; font-size: 13px; color: #1b5e20; }}
+                .footer {{ margin-top: 40px; padding: 25px 30px; background-color: #f8f9fa; border-top: 3px solid #4a5568; }}
+            </style>
+        </head>
+        <body>
+            <div class="email-container">
+                <div class="header">
+                    <h2 style="margin: 0; font-size: 24px; color: white; font-weight: 700;">📊 Reporte Consolidado de Sincronización</h2>
+                    <p style="margin: 8px 0 0 0; font-size: 14px; color: white;">Piloto Automático | ADA</p>
+                </div>
+                
+                <div class="content">
+                    <p style="font-size: 16px; margin-bottom: 20px; color: #2c3e50;"><strong>{saludo},</strong></p>
+                    <p>Se ha completado el ciclo de ejecución programado del piloto automático. A continuación se presenta el resumen consolidado de las regionales analizadas.</p>
+                    
+                    {"".join([f'<div class="attachment-note">📎 <strong>Archivos adjuntos:</strong> Se incluyen {len(archivos_adjuntos)} reportes detallados en formato Excel.</div>' if archivos_adjuntos else ''])}
+                    
+                    <div class="info-box">
+                        <h3 style="margin: 0 0 10px 0; font-size: 16px; color: #1565c0;">📋 Información General</h3>
+                        <ul style="margin: 0; padding-left: 20px;">
+                            <li><strong>Fecha de Ejecución:</strong> {fecha_actual}</li>
+                            <li><strong>Regionales Procesadas:</strong> {", ".join(regiones_ejecutadas)}</li>
+                        </ul>
+                    </div>
+                    
+                    <h3 style="margin-top: 30px; color: #2c3e50;">📈 Resumen de Ejecución</h3>
+                    {tabla_resumen_html}
+                    
+                    {"".join(secciones_detalle)}
+                </div>
+                
+                <div class="footer">
+                    <p style="margin: 0; font-size: 12px; color: #7f8c8d; text-align: center;">Este es un correo automático generado por el Sistema ADA.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        # Enviar correo de forma asíncrona
+        threading.Thread(
+            target=enviar_correo_notificacion,
+            args=(asunto, cuerpo_html, destinatarios, archivos_adjuntos),
+            daemon=True
+        ).start()
 
     def update_incidents_table(self, incidents_df):
         for item in self.incidents_tree.get_children(): self.incidents_tree.delete(item)
@@ -2050,7 +2688,9 @@ class App(ttk.Window):
             'proxima_ejecucion_ts': self.proxima_ejecucion_dt.timestamp() if self.piloto_activo and self.proxima_ejecucion_dt else None,
             'execution_history': self.execution_history,
             'email_recipients': self.recipients_list,
-            'selected_regionales': {regional: var.get() for regional, var in self.regional_vars.items()}  # Guardar regionales
+            'selected_regionales': {regional: var.get() for regional, var in self.regional_vars.items()},  # Guardar regionales
+            'supabase_url': getattr(self, 'supabase_url', ''),
+            'supabase_key': getattr(self, 'supabase_key', '')
         }
         try:
             with open(SETTINGS_FILE, 'w') as f:
@@ -2090,6 +2730,9 @@ class App(ttk.Window):
                 for regional, var in self.regional_vars.items():
                     if regionales_guardadas.get(regional):
                         var.set(True)
+
+                self.supabase_url = settings.get('supabase_url', 'https://jcozaaifpfukqlypfuqq.supabase.co')
+                self.supabase_key = settings.get('supabase_key', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impjb3phYWlmcGZ1a3FseXBmdXFxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MDY4Mjg4MiwiZXhwIjoyMDk2MjU4ODgyfQ.80jkincEydxGbuhqKYEjJBOf1LJ3TkhthVgl0sPah8k')
 
                 if settings.get('piloto_activo'):
                     self.piloto_switch.invoke()
