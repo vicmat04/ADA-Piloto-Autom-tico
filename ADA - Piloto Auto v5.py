@@ -123,23 +123,65 @@ LISTA_SERVICIOS_PRIORIZADA = [
 
 SERVICIOS = [item['categoria'] for item in LISTA_SERVICIOS_PRIORIZADA]
 
-def extraer_servicio(itemname, useraccount_dict=None):
+def extraer_servicio(itemname, useraccount_dict=None, useraccount_norm=None, primeros_nombres_norm=None):
     if useraccount_dict is None:
         useraccount_dict = {}
+    if useraccount_norm is None:
+        useraccount_norm = {}
+    if primeros_nombres_norm is None:
+        primeros_nombres_norm = set()
         
     itemname_upper = str(itemname).upper()
     palabras_item = itemname_upper.replace('-', ' ').split()
 
     item_key = str(itemname).strip().upper()
+    
+    # 1. Coincidencia exacta original
     if item_key in useraccount_dict:
         return 'USO DE PC'
         
+    # 2. Coincidencia por primer nombre o coincidencia normalizada
+    if useraccount_norm:
+        import unicodedata
+        def normalizar_texto(texto):
+            if not texto: return ""
+            return "".join(c for c in unicodedata.normalize('NFD', str(texto).strip().upper()) if unicodedata.category(c) != 'Mn')
+            
+        itemname_limpio = ' '.join(str(itemname).replace('--', '-').strip('-').strip().split())
+        partes = [p.strip() for p in itemname_limpio.split('-') if p.strip()]
+        
+        # Remover sufijos típicos del final si existen
+        sufijos_a_remover = {'M', 'F', 'P', 'S', 'U', 'D', 'TE', 'PG', 'VERIFICAR', 'OK', 'CORREGIDO VIA DB'}
+        while partes:
+            ultimo = partes[-1].upper()
+            if ultimo in sufijos_a_remover:
+                partes.pop()
+            else:
+                break
+                
+        if partes:
+            nombre_item = " ".join(partes)
+            nombre_item_norm = normalizar_texto(nombre_item)
+            
+            # A. Comparar nombre completo normalizado
+            if nombre_item_norm in useraccount_norm:
+                return 'USO DE PC'
+                
+            # B. Comparar primer nombre normalizado
+            palabras_nombre = nombre_item_norm.split()
+            if palabras_nombre:
+                primer_nombre_item = palabras_nombre[0]
+                if primer_nombre_item in primeros_nombres_norm:
+                    return 'USO DE PC'
+
+    # 3. Coincidencia por patrones regex de PC
     patrones_pc = [r'^PC\d*$', r'^LAPTOP\d*$', r'^CRON[OÓ]METRO\d*$', r'^HORAS?$']
     for palabra in palabras_item:
         for patron in patrones_pc:
             if re.match(patron, palabra, re.IGNORECASE):
                 return 'USO DE PC'
 
+    # 4. Coincidencia con otros servicios priorizados
     for servicio_info in LISTA_SERVICIOS_PRIORIZADA:
         categoria_actual = servicio_info['categoria']
         
@@ -291,8 +333,16 @@ def analizar_itemname(data, useraccount_dict=None):
         if len(partes) >= 2 and partes[-1] in ['M', 'F'] and partes[-2] in tipos_validos: return 'OK'
         return 'VERIFICAR'
         
+    import unicodedata
+    def normalizar_texto(texto):
+        if not texto: return ""
+        return "".join(c for c in unicodedata.normalize('NFD', str(texto).strip().upper()) if unicodedata.category(c) != 'Mn')
+    
+    useraccount_norm = {normalizar_texto(k): v for k, v in useraccount_dict.items()}
+    primeros_nombres_norm = {k.split()[0] for k in useraccount_norm.keys() if k.split()}
+
     data['SEXO'] = data['ITEMNAME'].apply(obtener_sexo); data['TIPO U'] = data['ITEMNAME'].apply(obtener_tipo_u); data['OBSERVACIÓN'] = data['ITEMNAME'].apply(obtener_observacion)
-    data['SERVICIO'] = data['ITEMNAME'].apply(lambda x: extraer_servicio(x, useraccount_dict))
+    data['SERVICIO'] = data['ITEMNAME'].apply(lambda x: extraer_servicio(x, useraccount_dict, useraccount_norm, primeros_nombres_norm))
     return data
 
 def procesar_bases_de_datos(ruta_carpeta_raiz, password, start_date, end_date, app_instance):
