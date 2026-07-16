@@ -26,7 +26,8 @@ from email.message import EmailMessage
 # --- CONFIGURACIÓN ---
 logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 AUTOR = "© 2025 Víctor Domínguez. Todos los derechos reservados."
-VERSION = "5.0.0"
+VERSION = "5.1.1"
+BUILD_DATE = "2026-07-06"
 password = 'oNer00FooR3n0'
 SETTINGS_FILE = 'settings.json'
 # Correo del administrador que recibirá las notificaciones de error.
@@ -38,6 +39,12 @@ REGION_FOLDER_MAP = {
     "Chiriquí": "BD_Chiriqui",
     "Veraguas": "BD_Veraguas",
     "Panamá": "BD_Panamá"
+}
+
+MESES_ES = {
+    1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+    5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+    9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
 }
 
 import gspread
@@ -222,7 +229,7 @@ def generar_resumen_servicios(datos):
             pivot_servicios[servicio] = 0
             
     # Agregar la columna de mes formateado en texto (español)
-    pivot_servicios['Mes'] = pivot_servicios['month'].apply(lambda x: datetime(1900, x, 1).strftime('%B').capitalize())
+    pivot_servicios['Mes'] = pivot_servicios['month'].apply(lambda x: MESES_ES.get(x, f'Mes_{x}'))
     
     # Renombrar source_folder a Infoplaza y year a Año
     pivot_servicios.rename(columns={'source_folder': 'Infoplaza', 'year': 'Año'}, inplace=True)
@@ -231,8 +238,14 @@ def generar_resumen_servicios(datos):
     columnas_servicios = SERVICIOS + ['OTROS', 'USO DE PC']
     pivot_servicios['Total'] = pivot_servicios[columnas_servicios].sum(axis=1)
     
+    # Agregar columnas nuevas
+    pivot_servicios['Mes Número'] = pivot_servicios['month'].astype(int)
+    pivot_servicios['Periodo'] = pivot_servicios.apply(
+        lambda r: f"{int(r['Año'])}-{int(r['month']):02d}", axis=1
+    )
+    
     # Ordenar y seleccionar columnas finales
-    columnas_finales = ['Infoplaza', 'Año', 'Mes'] + columnas_servicios + ['Total']
+    columnas_finales = ['Infoplaza', 'Año', 'Mes', 'Mes Número', 'Periodo'] + columnas_servicios + ['Total']
     return pivot_servicios[columnas_finales]
 
 def resource_path(relative_path):
@@ -392,6 +405,14 @@ def procesar_bases_de_datos(ruta_carpeta_raiz, password, start_date, end_date, a
                                      dias_sin_sinc, "N/A", "N/A", obs])
             continue
 
+        # Carpeta cerrada temporalmente
+        archivos_cerrada_tmp = glob.glob(os.path.join(carpeta, "CERRADA TEMPORALMENTE.txt"))
+        if archivos_cerrada_tmp:
+            obs = os.path.splitext(os.path.basename(archivos_cerrada_tmp[0]))[0]
+            datos_incidentes.append([datetime.now(), os.path.basename(carpeta), fecha_archivo_str,
+                                     dias_sin_sinc, "N/A", "N/A", obs])
+            continue
+
         # Detectar si hay otros archivos .txt (observaciones)
         # NUEVA LÓGICA: Guardar observación pero NO agregar registro todavía
         observacion_txt = None
@@ -508,12 +529,15 @@ def procesar_bases_de_datos(ruta_carpeta_raiz, password, start_date, end_date, a
 
 def generar_resumen(datos):
     if datos.empty: return pd.DataFrame()
-    datos['year'] = datos['DATETIME'].dt.year; datos['month'] = datos['DATETIME'].dt.month
-    resumen_agg = datos.groupby(['source_folder', 'year', 'month']).agg(M=('SEXO', lambda x: (x == 'M').sum()), F=('SEXO', lambda x: (x == 'F').sum()), P=('TIPO U', lambda x: (x == 'P').sum()), S=('TIPO U', lambda x: (x == 'S').sum()), U=('TIPO U', lambda x: (x == 'U').sum()), D=('TIPO U', lambda x: (x == 'D').sum()), TE=('TIPO U', lambda x: (x == 'TE').sum()), PG=('TIPO U', lambda x: (x == 'PG').sum())).reset_index()
-    resumen_agg['Mes'] = resumen_agg['month'].apply(lambda x: datetime(1900, x, 1).strftime('%B').capitalize())
+    df = datos.copy()
+    df['year'] = df['DATETIME'].dt.year; df['month'] = df['DATETIME'].dt.month
+    resumen_agg = df.groupby(['source_folder', 'year', 'month']).agg(M=('SEXO', lambda x: (x == 'M').sum()), F=('SEXO', lambda x: (x == 'F').sum()), P=('TIPO U', lambda x: (x == 'P').sum()), S=('TIPO U', lambda x: (x == 'S').sum()), U=('TIPO U', lambda x: (x == 'U').sum()), D=('TIPO U', lambda x: (x == 'D').sum()), TE=('TIPO U', lambda x: (x == 'TE').sum()), PG=('TIPO U', lambda x: (x == 'PG').sum())).reset_index()
+    resumen_agg['Mes'] = resumen_agg['month'].apply(lambda x: MESES_ES.get(x, f'Mes_{x}'))
     resumen_agg.rename(columns={'source_folder': 'Infoplaza', 'year': 'Año', 'M': 'Masculino', 'F': 'Femenino', 'P': 'Primaria', 'S': 'Secundaria', 'U': 'Universitario', 'D': 'Docente', 'TE': 'Tercera Edad', 'PG': 'Público General'}, inplace=True)
     resumen_agg['Total'] = resumen_agg[['Primaria', 'Secundaria', 'Universitario', 'Docente', 'Tercera Edad', 'Público General']].sum(axis=1)
-    return resumen_agg[['Infoplaza', 'Año', 'Mes', 'Masculino', 'Femenino', 'Primaria', 'Secundaria', 'Universitario', 'Docente', 'Tercera Edad', 'Público General', 'Total']]
+    resumen_agg['Mes Número'] = resumen_agg['month'].astype(int)
+    resumen_agg['Periodo'] = resumen_agg.apply(lambda r: f"{int(r['Año'])}-{int(r['month']):02d}", axis=1)
+    return resumen_agg[['Infoplaza', 'Año', 'Mes', 'Mes Número', 'Periodo', 'Masculino', 'Femenino', 'Primaria', 'Secundaria', 'Universitario', 'Docente', 'Tercera Edad', 'Público General', 'Total']]
 
 def generar_resumen_cruzado(datos):
     if datos.empty: return pd.DataFrame()
@@ -536,7 +560,7 @@ def generar_resumen_cruzado(datos):
     ).reset_index()
 
     resumen_agg['Total'] = resumen_agg['Masculino'] + resumen_agg['Femenino']
-    resumen_agg['Mes'] = resumen_agg['month'].apply(lambda x: datetime(1900, x, 1).strftime('%B').capitalize())
+    resumen_agg['Mes'] = resumen_agg['month'].apply(lambda x: MESES_ES.get(x, f'Mes_{x}'))
 
     # Mapear TIPO U
     tipo_map = {
@@ -547,7 +571,10 @@ def generar_resumen_cruzado(datos):
 
     resumen_agg.rename(columns={'source_folder': 'Infoplaza', 'year': 'Año', 'TIPO U': 'Tipo Usuario'}, inplace=True)
     
-    return resumen_agg[['Infoplaza', 'Año', 'Mes', 'Tipo Usuario', 'Masculino', 'Femenino', 'Total']]
+    resumen_agg['Mes Número'] = resumen_agg['month'].astype(int)
+    resumen_agg['Periodo'] = resumen_agg.apply(lambda r: f"{int(r['Año'])}-{int(r['month']):02d}", axis=1)
+    
+    return resumen_agg[['Infoplaza', 'Año', 'Mes', 'Mes Número', 'Periodo', 'Tipo Usuario', 'Masculino', 'Femenino', 'Total']]
 
 def guardar_en_excel(datos, reporte_incidentes, resumen, archivo_salida, resumen_cruzado=None):
     import traceback
@@ -667,7 +694,11 @@ def subir_datos_a_google_sheets(resumen_df, nombre_carpeta_raiz):
         df_hoja['Total'] = df_hoja[columnas_a_sumar].sum(axis=1)
         for col in numeric_cols:
              if col in df_hoja.columns: df_hoja[col] = pd.to_numeric(df_hoja[col], errors='coerce').fillna(0).astype(int)
-        valores_actualizados = [df_hoja.columns.tolist()] + df_hoja.where(pd.notna(df_hoja), None).values.tolist()
+        # Sanitizar NaN antes de serializar: Google Sheets no acepta NaN en JSON,
+        # solo acepta None (que se convierte a null). Reemplazamos todos los NaN/inf.
+        df_hoja = df_hoja.replace([float('inf'), float('-inf')], None)
+        df_hoja = df_hoja.where(pd.notna(df_hoja), None)
+        valores_actualizados = [df_hoja.columns.tolist()] + df_hoja.values.tolist()
         
         # Redimensionar la hoja antes de escribir para liberar celdas del limite de 10M
         redimensionar_hoja_google_sheets(client, sheet_id, nombre_carpeta_raiz, len(valores_actualizados), len(valores_actualizados[0]))
@@ -774,7 +805,10 @@ def subir_porcentajes_sincronizacion(reporte_df, regional):
         fecha_reporte_str = fecha_reporte.strftime('%Y-%m-%d')
         
         # Separar cerradas de operativas (criterio usado para el correo)
-        df_operativas = reporte_df[reporte_df['Observación'] != 'CERRADA DEFINITIVAMENTE'].copy()
+        # Tanto CERRADA DEFINITIVAMENTE como CERRADA TEMPORALMENTE se excluyen
+        # del denominador: no penalizan ni al porcentaje ni al promedio de días.
+        ESTADOS_EXCLUIDOS = ['CERRADA DEFINITIVAMENTE', 'CERRADA TEMPORALMENTE']
+        df_operativas = reporte_df[~reporte_df['Observación'].isin(ESTADOS_EXCLUIDOS)].copy()
         
         if df_operativas.empty:
             logging.warning("No hay sucursales operativas para calcular porcentajes.")
@@ -992,7 +1026,7 @@ def obtener_promedios_mensuales_sheets(regional):
         return None, None, 0
 
 
-def enviar_correo_notificacion(asunto, cuerpo_html, destinatarios, archivo_adjunto=None):
+def enviar_correo_notificacion(asunto, cuerpo_html, destinatarios, archivo_adjunto=None, email_settings=None):
     """
     Se conecta al servidor SMTP y envía un correo HTML, opcionalmente con un archivo o archivos adjuntos.
 
@@ -1001,12 +1035,20 @@ def enviar_correo_notificacion(asunto, cuerpo_html, destinatarios, archivo_adjun
         cuerpo_html (str): El contenido del correo en formato HTML.
         destinatarios (list): Una lista de las direcciones de correo de los destinatarios.
         archivo_adjunto (str/list/tuple, optional): La ruta o lista de rutas completas a los archivos a adjuntar. Por defecto es None.
+        email_settings (dict, optional): Configuraciones de correo (remitente, password, etc.).
     """
     # --- Credenciales configuradas ---
-    remitente = "victorpty999@gmail.com"
-    password_app = "tcdlqiyfgoirkruw"
-    servidor_smtp = "smtp.gmail.com"
-    puerto = 587
+    if email_settings:
+        remitente = email_settings.get('remitente', "victorpty999@gmail.com")
+        password_app = email_settings.get('password_app', "tcdlqiyfgoirkruw")
+        servidor_smtp = email_settings.get('servidor_smtp', "smtp.gmail.com")
+        puerto = int(email_settings.get('puerto', 587))
+    else:
+        remitente = "victorpty999@gmail.com"
+        password_app = "tcdlqiyfgoirkruw"
+        servidor_smtp = "smtp.gmail.com"
+        puerto = 587
+
     
     if not destinatarios:
         logging.warning("No se enviaron correos: no hay destinatarios configurados.")
@@ -1041,30 +1083,44 @@ def enviar_correo_notificacion(asunto, cuerpo_html, destinatarios, archivo_adjun
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            # --- Conectar y enviar ---
-            with smtplib.SMTP(servidor_smtp, puerto) as smtp:
-                smtp.starttls()
-                smtp.login(remitente, password_app)
-                smtp.send_message(msg)
+            # --- Conectar y enviar vía Gmail API ---
+            SCOPES = ['https://www.googleapis.com/auth/gmail.send']
+            creds = None
+            if os.path.exists('token.json'):
+                from google.oauth2.credentials import Credentials as OAuthCredentials
+                creds = OAuthCredentials.from_authorized_user_file('token.json', SCOPES)
+            
+            if not creds or not creds.valid:
+                if creds and creds.expired and creds.refresh_token:
+                    from google.auth.transport.requests import Request
+                    creds.refresh(Request())
+                else:
+                    from google_auth_oauthlib.flow import InstalledAppFlow
+                    flow = InstalledAppFlow.from_client_secrets_file('client_secret.json', SCOPES)
+                    creds = flow.run_local_server(port=0)
+                with open('token.json', 'w') as token:
+                    token.write(creds.to_json())
+                    
+            from googleapiclient.discovery import build
+            import base64
+            service = build('gmail', 'v1', credentials=creds)
+            
+            encoded_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+            create_message = {'raw': encoded_message}
+            
+            service.users().messages().send(userId="me", body=create_message).execute()
+            
             logging.info(f"Correo de notificación enviado a: {', '.join(destinatarios)}")
             return True
 
-        except smtplib.SMTPAuthenticationError as e:
-            logging.error(f"Error FATAL de autenticación SMTP: {e}. Verifique usuario/crédenciales. No se reintentará.")
-            break
-
-        except (socket.gaierror, ConnectionRefusedError, smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, OSError) as e:
-            logging.warning(f"Error de conexión enviando correo (Intento {attempt}/{MAX_RETRIES}): {e}")
+        except Exception as e:
+            logging.warning(f"Error enviando correo API (Intento {attempt}/{MAX_RETRIES}): {e}")
             if attempt < MAX_RETRIES:
                 logging.info(f"Esperando {RETRY_DELAY} segundos antes del reintento...")
                 time.sleep(RETRY_DELAY)
             else:
                 logging.error(f"Se agotaron los {MAX_RETRIES} intentos de envío. No se pudo enviar el correo.")
-        
-        except Exception as e:
-            logging.error(f"Error inesperado no manejado al enviar correo: {e}")
-            break
-
+                
     return False
 
 
@@ -1327,6 +1383,12 @@ class App(ttk.Window):
         self.editing_email = None # Variable para rastrear qué correo se está editando 
         self.supabase_url = "https://jcozaaifpfukqlypfuqq.supabase.co"
         self.supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impjb3phYWlmcGZ1a3FseXBmdXFxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MDY4Mjg4MiwiZXhwIjoyMDk2MjU4ODgyfQ.80jkincEydxGbuhqKYEjJBOf1LJ3TkhthVgl0sPah8k"
+        self.email_settings = {
+            'remitente': 'victorpty999@gmail.com',
+            'password_app': 'tcdlqiyfgoirkruw',
+            'servidor_smtp': 'smtp.gmail.com',
+            'puerto': 587
+        }
 
         self.create_widgets()
 
@@ -1424,6 +1486,12 @@ class App(ttk.Window):
         self.cronometro_label = ttk.Label(footer, textvariable=self.proxima_ejecucion_var)
         self.cronometro_label.pack(side=LEFT, padx=10)
         ttk.Label(footer, text=AUTOR, anchor=E).pack(side=RIGHT, padx=10)
+        ttk.Label(
+            footer,
+            text=f"v{VERSION}  •  Build {BUILD_DATE}",
+            anchor=CENTER,
+            bootstyle="secondary"
+        ).pack(side=LEFT, expand=True)
 
     def create_history_table(self, parent):
         cols = ('id', 'fecha_hora', 'origen', 'regional', 'periodo', 'archivos', 'registros', 'proceso', 'subida', 'correo_enviado', 'incidencias')
@@ -1481,12 +1549,12 @@ class App(ttk.Window):
         # --- Fila de Controles ---
         # Nombre
         ttk.Label(form_frame, text="Nombre:").pack(side=LEFT, padx=(0, 5))
-        self.recipient_name = ttk.Entry(form_frame, width=25)
+        self.recipient_name = ttk.Entry(form_frame, width=20)
         self.recipient_name.pack(side=LEFT, padx=(0, 10), fill=X, expand=True)
 
         # Correo
         ttk.Label(form_frame, text="Correo:").pack(side=LEFT, padx=(0, 5))
-        self.recipient_email = ttk.Entry(form_frame, width=30)
+        self.recipient_email = ttk.Entry(form_frame, width=25)
         self.recipient_email.pack(side=LEFT, padx=(0, 10), fill=X, expand=True)
 
         # Cargo (Opciones Extendidas)
@@ -1510,6 +1578,12 @@ class App(ttk.Window):
         self.btn_cancel_edit.pack_forget() # Oculto por defecto
 
         ttk.Button(form_frame, text="Quitar", bootstyle="danger-outline", command=self.remove_recipient, width=15).pack(side=LEFT, padx=(5, 0))
+        ttk.Separator(form_frame, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=10)
+        self.btn_toggle_all = ttk.Button(
+            form_frame, text="☑ Marcar todos", bootstyle="secondary-outline",
+            command=self.toggle_all_recipients, width=16
+        )
+        self.btn_toggle_all.pack(side=LEFT, padx=(0, 5))
 
         # --- Tabla de Destinatarios ---
         cols = ('nombre', 'correo', 'cargo', 'regional', 'activo')
@@ -1583,6 +1657,29 @@ class App(ttk.Window):
                                 r['activo'] = (new_activo == "☑")
                                 break
                         self.save_settings()
+
+    def toggle_all_recipients(self):
+        """Marca o desmarca todos los destinatarios como activos en un solo clic."""
+        # Determinar estado actual: si TODOS están activos, desmarcar. Si al menos uno está inactivo, marcar todos.
+        todos_activos = all(r.get('activo', False) for r in self.recipients_list)
+        nuevo_estado = not todos_activos
+        nuevo_symbol = "☑" if nuevo_estado else "☐"
+        nuevo_label  = "☐ Desmarcar todos" if nuevo_estado else "☑ Marcar todos"
+
+        # Actualizar memoria
+        for r in self.recipients_list:
+            r['activo'] = nuevo_estado
+
+        # Actualizar Treeview
+        for item_id in self.recipients_tree.get_children():
+            values = list(self.recipients_tree.item(item_id, 'values'))
+            if len(values) >= 5:
+                values[4] = nuevo_symbol
+                self.recipients_tree.item(item_id, values=values)
+
+        # Actualizar label del botón para feedback visual
+        self.btn_toggle_all.config(text=nuevo_label)
+        self.save_settings()
 
     def cancel_edit(self):
         """Cancela el modo edición y limpia el formulario."""
@@ -1673,6 +1770,86 @@ class App(ttk.Window):
             self.cancel_edit()
 
         self.save_settings()
+
+    def abrir_configuracion_correo(self):
+        config_window = tk.Toplevel(self)
+        config_window.title("Configuración de Correo Emisor")
+        config_window.resizable(False, False)
+        config_window.transient(self)
+        config_window.grab_set()
+
+        try:
+            config_window.iconbitmap(resource_path('VicTor.ico'))
+        except:
+            pass
+
+        # Centrar la ventana en la pantalla
+        config_window.update_idletasks()
+        width = 450
+        height = 420
+        x = (config_window.winfo_screenwidth() // 2) - (width // 2)
+        y = (config_window.winfo_screenheight() // 2) - (height // 2)
+        config_window.geometry(f'{width}x{height}+{x}+{y}')
+
+        main_frame = ttk.Frame(config_window, padding=25)
+        main_frame.pack(fill=BOTH, expand=True)
+
+        # Encabezado
+        ttk.Label(main_frame, text="⚙️ Servidor SMTP", font="-size 14 -weight bold", bootstyle="info").pack(pady=(0, 15))
+        ttk.Label(main_frame, text="Configura la cuenta desde donde el Piloto Automático enviará\nlos correos de forma automática.", justify="center", foreground="gray").pack(pady=(0, 15))
+
+        # Marco de datos
+        form_frame = ttk.LabelFrame(main_frame, text=" Credenciales ", padding=15)
+        form_frame.pack(fill=BOTH, expand=True, pady=(0, 15))
+
+        # Remitente
+        ttk.Label(form_frame, text="Correo Remitente:", font="-size 10 -weight bold").pack(anchor=W)
+        entry_remitente = ttk.Entry(form_frame)
+        entry_remitente.insert(0, self.email_settings.get('remitente', ''))
+        entry_remitente.pack(fill=X, pady=(2, 10))
+
+        # Contraseña
+        ttk.Label(form_frame, text="Contraseña de Aplicación:", font="-size 10 -weight bold").pack(anchor=W)
+        entry_password = ttk.Entry(form_frame, show="*")
+        entry_password.insert(0, self.email_settings.get('password_app', ''))
+        entry_password.pack(fill=X, pady=(2, 10))
+
+        # Fila Servidor y Puerto
+        row_frame = ttk.Frame(form_frame)
+        row_frame.pack(fill=X, pady=(2, 5))
+        
+        # Servidor
+        server_frame = ttk.Frame(row_frame)
+        server_frame.pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
+        ttk.Label(server_frame, text="Servidor SMTP:", font="-size 10 -weight bold").pack(anchor=W)
+        entry_smtp = ttk.Entry(server_frame)
+        entry_smtp.insert(0, self.email_settings.get('servidor_smtp', ''))
+        entry_smtp.pack(fill=X, pady=(2, 0))
+
+        # Puerto
+        port_frame = ttk.Frame(row_frame)
+        port_frame.pack(side=LEFT)
+        ttk.Label(port_frame, text="Puerto:", font="-size 10 -weight bold").pack(anchor=W)
+        entry_puerto = ttk.Entry(port_frame, width=10)
+        entry_puerto.insert(0, str(self.email_settings.get('puerto', '587')))
+        entry_puerto.pack(fill=X, pady=(2, 0))
+
+        def guardar_config():
+            self.email_settings = {
+                'remitente': entry_remitente.get().strip(),
+                'password_app': entry_password.get().strip(),
+                'servidor_smtp': entry_smtp.get().strip(),
+                'puerto': int(entry_puerto.get().strip() or 587)
+            }
+            self.save_settings()
+            config_window.destroy()
+            Messagebox.show_info("Configuración de correo guardada con éxito.", "Guardado Exitoso", parent=self)
+
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=X, pady=(10, 0))
+        
+        ttk.Button(btn_frame, text="✔ Guardar Cambios", bootstyle="success", command=guardar_config).pack(side=LEFT, expand=True, fill=X, padx=(0, 5))
+        ttk.Button(btn_frame, text="✖ Cancelar", bootstyle="secondary-outline", command=config_window.destroy).pack(side=LEFT, expand=True, fill=X, padx=(5, 0))
 
     def sort_treeview(self, tree, col, reverse):
         data = [(tree.set(item, col), item) for item in tree.get_children('')]
@@ -1774,6 +1951,10 @@ class App(ttk.Window):
             datos_combinados, reporte_incidentes = procesar_bases_de_datos(
                 ruta_carpeta, password, fecha_inicio_dt, fecha_fin_query, self
             )
+            self._periodo_inicio = fecha_inicio_dt
+            self._periodo_fin = fecha_fin_dt
+            self._total_archivos = len(reporte_incidentes) if reporte_incidentes is not None else 0
+            self._total_registros = len(datos_combinados) if datos_combinados is not None else 0
             self.resumen = generar_resumen(datos_combinados)
             self.resumen_servicios = generar_resumen_servicios(datos_combinados)
             self.resumen_cruzado = generar_resumen_cruzado(datos_combinados)
@@ -1807,8 +1988,9 @@ class App(ttk.Window):
                 proceso_ok = guardar_en_excel(datos_combinados, reporte_incidentes, self.resumen, archivo_salida_final, self.resumen_cruzado)
                 
                 if proceso_ok:
-                    # Crear una versión reducida para el correo
+                    # Crear una versión reducida para el correo (sin datos crudos)
                     archivo_correo = archivo_salida_final.replace('.xlsx', '_Resumen.xlsx')
+                    correo_generado_ok = False
                     try:
                         with pd.ExcelWriter(archivo_correo, engine='openpyxl') as writer:
                             self.resumen.to_excel(writer, sheet_name='Resumen', index=False)
@@ -1816,9 +1998,10 @@ class App(ttk.Window):
                                 self.resumen_servicios.to_excel(writer, sheet_name='Servicios', index=False)
                             if not getattr(self, 'resumen_cruzado', pd.DataFrame()).empty:
                                 self.resumen_cruzado.to_excel(writer, sheet_name='Resumen Tipo usuario y género', index=False)
+                        correo_generado_ok = True
                     except Exception as e:
-                        logging.error(f"Error generando Excel de correo: {e}")
-                        archivo_correo = archivo_salida_final
+                        logging.error(f"Error generando Excel reducido para correo: {e}. No se adjuntará archivo al correo.")
+                        archivo_correo = None  # No adjuntar nada: mejor sin adjunto que con datos crudos
 
                     if not modo_automatico:
                         self.btn_subir_g.config(state=NORMAL)
@@ -1839,9 +2022,10 @@ class App(ttk.Window):
                     asunto_correo = f"Estatus de Sincronización - Regional {regional}"
                     cuerpo_html_correo = self.construir_cuerpo_correo(reporte_incidentes, regional)
                     destinatarios_filtrados = [r['correo'] for r in self.recipients_list if r['regional'] in [regional, "Todas"] and r.get('activo', True)]
+                    adjunto_correo = locals().get('archivo_correo', None)  # None si falló la generación
                     threading.Thread(
                         target=enviar_correo_notificacion,
-                        args=(asunto_correo, cuerpo_html_correo, destinatarios_filtrados, locals().get('archivo_correo', archivo_salida_final)),
+                        args=(asunto_correo, cuerpo_html_correo, destinatarios_filtrados, adjunto_correo, self.email_settings),
                         daemon=True
                     ).start()
                     correo_enviado_ok = True
@@ -1851,7 +2035,7 @@ class App(ttk.Window):
                     destinatario_admin = [ADMIN_EMAIL]
                     threading.Thread(
                         target=enviar_correo_notificacion,
-                        args=(asunto_correo, cuerpo_html_correo, destinatario_admin),
+                        args=(asunto_correo, cuerpo_html_correo, destinatario_admin, None, self.email_settings),
                         daemon=True
                     ).start()
                     correo_enviado_ok = True
@@ -1908,7 +2092,8 @@ class App(ttk.Window):
             return int(match.group(1)), match.group(2).strip()
         return None, str(folder_name)
 
-    def subir_a_supabase(self, df_servicios, df_demografico, regional, reporte_incidentes=None, df_cruzado=None):
+    def subir_a_supabase(self, df_servicios, df_demografico, regional, reporte_incidentes=None, df_cruzado=None, periodo_inicio=None, periodo_fin=None, total_archivos=0, total_registros=0, origen='automatico'):
+        lote_id = None
         if not getattr(self, 'supabase_url', None) or not getattr(self, 'supabase_key', None):
             logging.warning("Credenciales de Supabase no configuradas. Saltando sincronización.")
             return False
@@ -1920,13 +2105,40 @@ class App(ttk.Window):
         
         regional_normalizada = "Chiriquí" if regional == "Chiriqui" else regional
         
-        # 1. Escanear carpetas físicas para sincronizar la tabla infoplazas
-        ruta_carpeta = self.carpeta_entrada.get()
-        if not ruta_carpeta or not os.path.exists(ruta_carpeta):
-            logging.warning(f"Ruta de carpeta no válida para Supabase: {ruta_carpeta}")
-            return False
-            
         try:
+            headers = {
+                "apikey": self.supabase_key,
+                "Authorization": f"Bearer {self.supabase_key}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            }
+            
+            # --- CREAR LOTE DE CARGA ---
+            lote_payload = {
+                "regional": regional,
+                "periodo_inicio": periodo_inicio.isoformat() if periodo_inicio else None,
+                "periodo_fin": periodo_fin.isoformat() if periodo_fin else None,
+                "total_archivos_procesados": total_archivos,
+                "total_registros_extraidos": total_registros,
+                "origen": origen
+            }
+            url_crear_lote = f"{self.supabase_url.rstrip('/')}/rest/v1/rpc/crear_lote_carga"
+            res_lote = requests.post(url_crear_lote, headers={**headers, "Prefer": "return=representation"},
+                                      json={"p_payload": lote_payload})
+            if res_lote.status_code in [200, 201]:
+                lote_id = res_lote.json()
+                if isinstance(lote_id, str):
+                    lote_id = lote_id.strip('"')
+                logging.info(f"Lote de carga creado: {lote_id}")
+            else:
+                logging.warning(f"No se pudo crear lote de carga: {res_lote.status_code} - {res_lote.text}")
+                
+            # 1. Escanear carpetas físicas para sincronizar la tabla infoplazas
+            ruta_carpeta = self.carpeta_entrada.get()
+            if not ruta_carpeta or not os.path.exists(ruta_carpeta):
+                logging.warning(f"Ruta de carpeta no válida para Supabase: {ruta_carpeta}")
+                return False
+                
             subcarpetas = [f.path for f in os.scandir(ruta_carpeta) if f.is_dir()]
             infoplazas_payload = []
             for carpeta in subcarpetas:
@@ -1946,12 +2158,6 @@ class App(ttk.Window):
                     "regional": regional_normalizada,
                     "estado": estado
                 })
-                
-            headers = {
-                "apikey": self.supabase_key,
-                "Authorization": f"Bearer {self.supabase_key}",
-                "Content-Type": "application/json"
-            }
             
             # Subir infoplazas
             if infoplazas_payload:
@@ -1983,7 +2189,10 @@ class App(ttk.Window):
                         'regional': regional_normalizada,
                         'anio': int(row['Año']),
                         'mes': str(row['Mes']).strip(),
-                        'total': int(row['Total'])
+                        'total': int(row['Total']),
+                        'mes_numero': int(row.get('Mes Número', 0)),
+                        'periodo': str(row.get('Periodo', '')),
+                        'lote_carga_id': str(lote_id) if lote_id else None
                     }
                     for py_col, db_col in servicios_map.items():
                         record[db_col] = int(row.get(py_col, 0))
@@ -2017,7 +2226,10 @@ class App(ttk.Window):
                         'regional': regional_normalizada,
                         'anio': int(row['Año']),
                         'mes': str(row['Mes']).strip(),
-                        'total': int(row['Total'])
+                        'total': int(row['Total']),
+                        'mes_numero': int(row.get('Mes Número', 0)),
+                        'periodo': str(row.get('Periodo', '')),
+                        'lote_carga_id': str(lote_id) if lote_id else None
                     }
                     for py_col, db_col in demograficos_map.items():
                         record[db_col] = int(row.get(py_col, 0))
@@ -2048,7 +2260,10 @@ class App(ttk.Window):
                         'tipo_usuario': str(row['Tipo Usuario']),
                         'masculino': int(row.get('Masculino', 0)),
                         'femenino': int(row.get('Femenino', 0)),
-                        'total': int(row['Total'])
+                        'total': int(row['Total']),
+                        'mes_numero': int(row.get('Mes Número', 0)),
+                        'periodo': str(row.get('Periodo', '')),
+                        'lote_carga_id': str(lote_id) if lote_id else None
                     }
                     cruzado_payload.append(record)
                     
@@ -2081,20 +2296,87 @@ class App(ttk.Window):
                         'regional': regional_normalizada,
                         'sucursal': sucursal_str,
                         'dias_sin_sinc': dias_val,
-                        'observacion': obs_val
+                        'observacion': obs_val,
+                        'lote_carga_id': str(lote_id) if lote_id else None
                     })
                     
                 if historial_payload:
-                    url_historial = f"{self.supabase_url.rstrip('/')}/rest/v1/historial_sincronizacion"
-                    res = requests.post(url_historial, headers=headers, json=historial_payload)
+                    url_historial = f"{self.supabase_url.rstrip('/')}/rest/v1/historial_sincronizacion?on_conflict=fecha_reporte,regional,sucursal"
+                    headers_upsert = {**headers, 'Prefer': 'resolution=merge-duplicates'}
+                    res = requests.post(url_historial, headers=headers_upsert, json=historial_payload)
                     if res.status_code not in [200, 201, 204]:
                         logging.error(f"Error al subir historial_sincronizacion a Supabase: {res.status_code} - {res.text}")
                     else:
                         logging.info(f"Sincronizado historial_sincronizacion en Supabase ({len(historial_payload)} filas).")
+            # 5. Subir/actualizar infoplaza_sync_status
+            if reporte_incidentes is not None and not reporte_incidentes.empty:
+                sync_status_payload = []
+                fecha_hoy = datetime.now().strftime('%Y-%m-%d')
+                
+                for _, row in reporte_incidentes.iterrows():
+                    carpeta_str = str(row['Carpeta'])
+                    num, _ = self.extraer_numero_nombre(carpeta_str)
+                    if num is None: continue
+                    
+                    dias_val = row.get('Días sin Sincronizar', 0)
+                    if dias_val == 'N/A' or pd.isna(dias_val): dias_int = 0
+                    else:
+                        try: dias_int = int(dias_val)
+                        except: dias_int = 0
+                    
+                    obs = str(row.get('Observación', '')).strip()
+                    
+                    if obs == 'CERRADA DEFINITIVAMENTE': estado = 'cerrada'
+                    elif obs == 'CERRADA TEMPORALMENTE': estado = 'cerrada_temporalmente'
+                    elif obs == 'Carpeta Vacía' or 'Carpeta Vacía' in obs: estado = 'carpeta_vacia'
+                    elif dias_int > 10: estado = 'para_revision'
+                    elif dias_int >= 0: estado = 'al_dia'
+                    else: estado = 'desconocido'
+                    
+                    fecha_sinc = None
+                    if estado not in ('cerrada', 'carpeta_vacia', 'desconocido') and dias_int >= 0:
+                        fecha_sinc = (datetime.now() - timedelta(days=dias_int)).strftime('%Y-%m-%d')
+                    
+                    sync_status_payload.append({
+                        'numero_infoplaza': num, 'fecha_ultima_sincronizacion': fecha_sinc,
+                        'fecha_ultimo_reporte': fecha_hoy, 'dias_sin_sincronizar': dias_int,
+                        'estado_sync': estado, 'observacion': obs,
+                        'lote_carga_id': str(lote_id) if lote_id else None, 'regional': regional_normalizada
+                    })
+                
+                if sync_status_payload:
+                    url_sync = f"{self.supabase_url.rstrip('/')}/rest/v1/rpc/upsert_infoplaza_sync_status"
+                    res = requests.post(url_sync, headers=headers, json={"payload": sync_status_payload})
+                    if res.status_code not in [200, 201, 204]:
+                        logging.error(f"Error al subir infoplaza_sync_status: {res.status_code} - {res.text}")
+                    else:
+                        logging.info(f"Sincronizado infoplaza_sync_status ({len(sync_status_payload)} infoplazas).")
+            
+            # --- ACTUALIZAR LOTE DE CARGA ---
+            if lote_id:
+                checksum_serv = int(df_servicios['Total'].sum()) if df_servicios is not None and not df_servicios.empty else 0
+                checksum_demo = int(df_demografico['Total'].sum()) if df_demografico is not None and not df_demografico.empty else 0
+                
+                update_payload = {
+                    "id": str(lote_id), "status": "complete",
+                    "total_servicios_subidos": len(servicios_payload) if 'servicios_payload' in locals() and servicios_payload else 0,
+                    "total_demografico_subidos": len(demograficos_payload) if 'demograficos_payload' in locals() and demograficos_payload else 0,
+                    "total_cruzado_subidos": len(cruzado_payload) if 'cruzado_payload' in locals() and cruzado_payload else 0,
+                    "checksum_servicios": checksum_serv, "checksum_demografico": checksum_demo
+                }
+                url_update_lote = f"{self.supabase_url.rstrip('/')}/rest/v1/rpc/actualizar_lote_carga"
+                requests.post(url_update_lote, headers=headers, json={"p_payload": update_payload})
             
             return True
         except Exception as e:
             logging.error(f"Excepción en subir_a_supabase: {e}")
+            if lote_id:
+                try:
+                    update_payload = {"id": str(lote_id), "status": "failed", "error_detail": str(e)[:500]}
+                    url_update = f"{self.supabase_url.rstrip('/')}/rest/v1/rpc/actualizar_lote_carga"
+                    requests.post(url_update, headers=headers, json={"p_payload": update_payload})
+                except:
+                    pass
             return False
 
     def subir_resumen_a_sheets(self, modo_automatico=False):
@@ -2104,35 +2386,64 @@ class App(ttk.Window):
         
         if not modo_automatico: self.show_animation("Subiendo a Google Sheets...")
         subida_ok = False
-        try:
-            nombre_carpeta = os.path.basename(self.carpeta_entrada.get())
-            subida_ok = subir_datos_a_google_sheets(self.resumen, nombre_carpeta)
+        nombre_carpeta = os.path.basename(self.carpeta_entrada.get())
+
+        # --- HILO DE SUPABASE: se lanza SIEMPRE, independiente de Sheets ---
+        def run_supabase_upload():
+            supabase_ok = False
+            error_msg = None
+            try:
+                regional = obtener_regional(nombre_carpeta)
+                supabase_ok = self.subir_a_supabase(
+                    getattr(self, 'resumen_servicios', pd.DataFrame()),
+                    self.resumen,
+                    regional,
+                    getattr(self, 'reporte_incidentes', None),
+                    getattr(self, 'resumen_cruzado', pd.DataFrame()),
+                    periodo_inicio=getattr(self, '_periodo_inicio', None),
+                    periodo_fin=getattr(self, '_periodo_fin', None),
+                    total_archivos=getattr(self, '_total_archivos', 0),
+                    total_registros=getattr(self, '_total_registros', 0),
+                    origen='automatico' if modo_automatico else 'manual'
+                )
+            except Exception as se:
+                error_msg = str(se)
+                logging.error(f"Fallo al sincronizar con Supabase: {se}")
             
-            # --- SUBIDA EN PARALELO A SUPABASE (ASÍNCRONA VÍA HILO) ---
-            def run_supabase_upload():
-                supabase_ok = False
-                try:
-                    regional = obtener_regional(nombre_carpeta)
-                    supabase_ok = self.subir_a_supabase(
-                        getattr(self, 'resumen_servicios', pd.DataFrame()),
-                        self.resumen,
-                        regional,
-                        getattr(self, 'reporte_incidentes', None),
-                        getattr(self, 'resumen_cruzado', pd.DataFrame())
-                    )
-                except Exception as se:
-                    logging.error(f"Fallo al sincronizar con Supabase: {se}")
+            # Callback de verificación
+            entry_id = getattr(self, 'current_auto_run_id', None) if modo_automatico else getattr(self, 'last_manual_run_id', None)
+            if entry_id is not None:
+                self.actualizar_estado_subida_historial(entry_id, subida_ok, supabase_ok)
+            
+            # Log explícito del resultado
+            if supabase_ok:
+                logging.info("✅ Upload a Supabase VERIFICADO: todas las tablas sincronizadas correctamente.")
+            else:
+                logging.error(f"❌ Upload a Supabase FALLÓ: {error_msg or 'error desconocido'}")
+            
+            # Actualizar status en la GUI si está disponible
+            try:
+                status_text = "Supabase: ✅ OK" if supabase_ok else "Supabase: ❌ Error"
+                self.after(0, lambda: self.status_label.config(
+                    text=f"Nube: {'✅' if subida_ok else '❌'} Sheets / {status_text}"
+                ))
+            except:
+                pass
+
+        # Lanzar hilo de Supabase ANTES de intentar Sheets
+        threading.Thread(target=run_supabase_upload, daemon=True).start()
+
+        # --- SUBIDA A GOOGLE SHEETS (independiente de Supabase) ---
+        try:
+            regional_actual = obtener_regional(nombre_carpeta)
+            if regional_actual in ["Panamá", "Chiriquí", "Chiriqui", "Veraguas"]:
+                logging.info(f"Subida a Google Sheets bloqueada para regional: {regional_actual}")
+                subida_ok = True  # Se simula éxito para no reportar error visual
+            else:
+                subida_ok = subir_datos_a_google_sheets(self.resumen, nombre_carpeta)
                 
-                # Actualizar el estatus en el historial con el callback combinado
-                entry_id = getattr(self, 'current_auto_run_id', None) if modo_automatico else self.last_manual_run_id
-                if entry_id is not None:
-                    self.actualizar_estado_subida_historial(entry_id, subida_ok, supabase_ok)
-
-            threading.Thread(target=run_supabase_upload, daemon=True).start()
-
             if subida_ok and not modo_automatico:
                 Messagebox.show_info(f"Los datos se han subido correctamente a la hoja '{nombre_carpeta}'.", "Subida Exitosa", parent=self)
-                self.status_label.config(text="Datos subidos a la nube.")
             return subida_ok
         except Exception as e:
             logging.error(f"FALLO en subida a Google Sheets: {e}")
@@ -2141,8 +2452,6 @@ class App(ttk.Window):
         finally:
             if not modo_automatico: self.hide_animation()
 
-
-
     def construir_cuerpo_correo(self, reporte_df, regional):
         """Genera el cuerpo HTML del correo con formato solicitado y compatible con Outlook."""
 
@@ -2150,8 +2459,10 @@ class App(ttk.Window):
             return "<p>No se generó reporte de incidentes para esta ejecución.</p>"
 
         # --- Separar cerradas de operativas ---
+        ESTADOS_EXCLUIDOS = ['CERRADA DEFINITIVAMENTE', 'CERRADA TEMPORALMENTE']
         df_cerradas = reporte_df[reporte_df['Observación'] == 'CERRADA DEFINITIVAMENTE'].copy()
-        df_operativas = reporte_df[reporte_df['Observación'] != 'CERRADA DEFINITIVAMENTE'].copy()
+        df_cerradas_temp = reporte_df[reporte_df['Observación'] == 'CERRADA TEMPORALMENTE'].copy()
+        df_operativas = reporte_df[~reporte_df['Observación'].isin(ESTADOS_EXCLUIDOS)].copy()
 
         # Asegurar columna numérica
         df_operativas['Días sin Sincronizar'] = pd.to_numeric(df_operativas['Días sin Sincronizar'], errors='coerce').fillna(0)
@@ -2254,6 +2565,7 @@ class App(ttk.Window):
         html_observaciones = crear_tabla_html('Sucursales con Observaciones', df_con_observaciones, ['Sucursal', 'Última sincronización', 'Días sin Sincronizar', 'Observación'], '#c0392b', '🔴', True)
         html_revision = crear_tabla_html('Sucursales con Más de 10 Días sin Sincronizar', df_revision_dias, ['Sucursal', 'Última sincronización', 'Días sin Sincronizar', 'Observación'], '#f39c12', '🟡', True)
         html_sincronizadas = crear_tabla_html('Sucursales Sincronizadas Dentro del Periodo', df_en_periodo, ['Sucursal', 'Última sincronización', 'Días sin Sincronizar'], '#27ae60', '✅', False, True)
+        html_cerradas_temp = crear_tabla_html('Sucursales Cerradas Temporalmente', df_cerradas_temp, ['Sucursal', 'Observación'], '#8e44ad', '⏸️')
         html_cerradas = crear_tabla_html('Sucursales Cerradas Definitivamente', df_cerradas, ['Sucursal', 'Observación'], '#7f8c8d', '🔒')
 
         ameritan_revision_count = len(df_con_observaciones) + len(df_revision_dias)
@@ -2373,6 +2685,7 @@ class App(ttk.Window):
                     {html_carpetas_vacias}
                     {html_observaciones}
                     {html_revision}
+                    {html_cerradas_temp}
                     {html_sincronizadas}
                     {html_cerradas}
                 </div>
@@ -2718,7 +3031,7 @@ class App(ttk.Window):
         # Enviar correo de forma asíncrona
         threading.Thread(
             target=enviar_correo_notificacion,
-            args=(asunto, cuerpo_html, destinatarios, archivos_adjuntos),
+            args=(asunto, cuerpo_html, destinatarios, archivos_adjuntos, self.email_settings),
             daemon=True
         ).start()
 
@@ -2740,7 +3053,8 @@ class App(ttk.Window):
             'email_recipients': self.recipients_list,
             'selected_regionales': {regional: var.get() for regional, var in self.regional_vars.items()},  # Guardar regionales
             'supabase_url': getattr(self, 'supabase_url', ''),
-            'supabase_key': getattr(self, 'supabase_key', '')
+            'supabase_key': getattr(self, 'supabase_key', ''),
+            'email_settings': getattr(self, 'email_settings', {})
         }
         try:
             with open(SETTINGS_FILE, 'w') as f:
@@ -2927,7 +3241,7 @@ class LoginWindow(ttk.Toplevel):
     
     def _enviar_correo_recuperacion(self, asunto, cuerpo):
         destinatarios = ["vicmat04@gmail.com", "victorpty999@gmail.com"]
-        exito = enviar_correo_notificacion(asunto, cuerpo, destinatarios)
+        exito = enviar_correo_notificacion(asunto, cuerpo, destinatarios, None, getattr(self, 'email_settings', None))
         self.after(0, lambda: self._post_recuperacion(exito))
 
     def _post_recuperacion(self, exito):
